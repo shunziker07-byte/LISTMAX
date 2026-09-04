@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html class="dark" lang="fr">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
+<meta name="description" content="LISTMAX — organise tes tâches, ton agenda et tes objectifs de vie dans une interface Obsidian Luxe."/>
+<title>LISTMAX</title>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="assets/js/tailwind.config.js"></script>
+<link rel="stylesheet" href="assets/css/style.css"/>
+</head>
+<body class="bg-surface text-on-surface font-body-md text-body-md flex flex-col min-h-screen">
+
+<!-- LOGIN / SIGNUP SCREEN -->
+<div id="login-screen" class="min-h-screen w-full flex flex-col items-center justify-center px-6 py-10 bg-surface">
+  <div class="w-full max-w-[380px]">
+    <div class="flex flex-col items-center mb-8">
+      <div class="h-14 w-14 rounded-2xl p-[1.5px] bg-gradient-to-br from-primary to-tertiary mb-3">
+        <div class="h-full w-full rounded-[14px] bg-[#0e0e13] flex items-center justify-center">
+          <svg viewBox="0 0 24 24" class="w-7 h-7" fill="none" stroke="url(#logo-grad-login)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <defs><linearGradient id="logo-grad-login" x1="0" y1="0" x2="24" y2="24"><stop offset="0%" stop-color="#ffb0c9"/><stop offset="100%" stop-color="#e8d6b3"/></linearGradient></defs>
+            <path d="M3 11.5 12 4l9 7.5"/>
+            <path d="M5 10v9a1 1 0 0 0 1 1h3v-5h6v5h3a1 1 0 0 0 1-1v-9"/>
+          </svg>
+        </div>
+      </div>
+      <span class="font-label-sm text-label-sm tracking-widest text-primary font-bold">LISTMAX</span>
+      <h1 id="auth-title" class="font-headline-lg text-headline-lg text-on-surface mt-2">Bon retour</h1>
+      <p id="auth-subtitle" class="font-body-md text-body-md text-on-surface-variant mt-1 text-center">Connecte-toi pour retrouver tes tâches, ton agenda et tes objectifs.</p>
+    </div>
+
+    <div class="p-1 rounded-full bg-surface-container-lowest flex items-center mb-5">
+      <button id="tab-login" type="button" class="auth-tab flex-1 py-2 rounded-full font-label-md text-label-md transition-all bg-primary-container text-on-primary-container font-semibold">Connexion</button>
+      <button id="tab-signup" type="button" class="auth-tab flex-1 py-2 rounded-full font-label-md text-label-md transition-all text-on-surface-variant">Créer un compte</button>
+    </div>
+
+    <div id="auth-error" class="hidden mb-3 px-3.5 py-2.5 rounded-xl bg-error-container/15 border border-error/25 text-error font-label-md text-label-md"></div>
+
+    <form id="auth-form" class="flex flex-col gap-3" autocomplete="on">
+      <input id="auth-name" type="text" placeholder="Nom complet" autocomplete="name" class="hidden w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant focus:border-primary"/>
+      <input id="auth-email" type="email" placeholder="Adresse e-mail" autocomplete="email" required class="w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant focus:border-primary"/>
+      <div class="relative">
+        <input id="auth-password" type="password" placeholder="Mot de passe" autocomplete="current-password" required minlength="4" class="w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 pr-11 outline-none font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant focus:border-primary"/>
+        <button type="button" id="toggle-pw" class="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant"><span class="material-symbols-outlined text-[18px]">visibility</span></button>
+      </div>
+      <button type="submit" id="auth-submit" class="mt-1 w-full py-3.5 rounded-xl bg-primary text-on-primary font-headline-md text-headline-md font-semibold active:scale-[0.98] transition-all">Se connecter</button>
+    </form>
+
+    <div class="flex items-center gap-3 my-5">
+      <div class="flex-1 h-px bg-white/10"></div>
+      <span class="font-label-sm text-label-sm text-on-surface-variant">ou</span>
+      <div class="flex-1 h-px bg-white/10"></div>
+    </div>
+
+    <button id="btn-google" type="button" class="w-full py-3 rounded-xl bg-surface-container-high text-on-surface font-body-md text-body-md font-semibold flex items-center justify-center gap-2.5 active:scale-[0.98] transition-all">
+      <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.9c1.7-1.57 2.7-3.88 2.7-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.9-2.26c-.8.54-1.84.86-3.06.86-2.35 0-4.34-1.59-5.05-3.72H.96v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.95 10.7A5.4 5.4 0 0 1 3.67 9c0-.59.1-1.17.28-1.7V4.97H.96A9 9 0 0 0 0 9c0 1.45.35 2.83.96 4.03l2.99-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.5.46 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.97l2.99 2.33C4.66 5.17 6.65 3.58 9 3.58z"/></svg>
+      Continuer avec Google
+    </button>
+
+    <p id="auth-google-note" class="text-center font-label-sm text-label-sm text-on-surface-variant/60 mt-3">Mode démo : aucune vraie authentification Google n'est reliée à ce prototype.</p>
+  </div>
+</div>
+
+<header id="app-header" class="hidden fixed top-0 w-full z-40 pt-safe bg-surface/80 backdrop-blur-xl shadow-[0_1px_8px_rgba(0,0,0,0.04)]">
+  <div class="h-16 px-container-padding flex items-center justify-between">
+    <div class="flex items-center gap-stack-gap">
+      <div class="h-9 w-9 rounded-[10px] p-[1.5px] bg-gradient-to-br from-primary to-tertiary shrink-0">
+        <div class="h-full w-full rounded-[8.5px] bg-[#0e0e13] flex items-center justify-center">
+          <svg viewBox="0 0 24 24" class="w-[18px] h-[18px]" fill="none" stroke="url(#logo-grad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <defs><linearGradient id="logo-grad" x1="0" y1="0" x2="24" y2="24"><stop offset="0%" stop-color="#ffb0c9"/><stop offset="100%" stop-color="#e8d6b3"/></linearGradient></defs>
+            <path d="M3 11.5 12 4l9 7.5"/>
+            <path d="M5 10v9a1 1 0 0 0 1 1h3v-5h6v5h3a1 1 0 0 0 1-1v-9"/>
+          </svg>
+        </div>
+      </div>
+      <div class="flex flex-col">
+        <span class="font-label-sm text-label-sm tracking-widest text-primary font-bold">LISTMAX</span>
+        <span id="page-title" class="font-headline-md text-headline-md text-on-surface truncate max-w-[200px]">Home</span>
+      </div>
+    </div>
+    <button id="btn-profile" class="w-8 h-8 rounded-full bg-primary flex items-center justify-center active:scale-90 transition-transform">
+      <span class="material-symbols-outlined text-on-primary text-[18px]">person</span>
+    </button>
+  </div>
+</header>
+
+<main id="app-main" class="hidden flex-1 flex-col relative w-full pt-16 pb-24 bg-surface">
+
+  <!-- HOME PAGE -->
+  <section id="page-home" class="page active flex-col w-full px-container-padding pb-8"></section>
+
+  <!-- TODO PAGE -->
+  <section id="page-todo" class="page flex-col w-full px-container-padding pb-8"></section>
+
+  <!-- CALENDAR PAGE -->
+  <section id="page-calendar" class="page flex-col w-full px-container-padding pb-8"></section>
+
+  <!-- GOALS PAGE -->
+  <section id="page-goals" class="page flex-col w-full px-container-padding pb-8"></section>
+
+  <!-- SETTINGS PAGE -->
+  <section id="page-settings" class="page flex-col w-full px-container-padding pb-8"></section>
+
+</main>
+
+<nav id="app-nav" class="hidden fixed bottom-0 w-full z-40 pb-safe bg-surface/85 backdrop-blur-xl shadow-[0_-1px_12px_rgba(0,0,0,0.08)]">
+  <div class="flex justify-around items-center h-16 px-container-padding">
+    <button data-nav="home" class="nav-btn flex flex-col items-center justify-center min-w-[44px] min-h-[44px] text-on-surface-variant transition-colors">
+      <span class="material-symbols-outlined text-[24px]">home</span>
+      <span class="font-label-sm text-label-sm mt-tight-margin">Home</span>
+      <span class="nav-dot w-1.5 h-1.5 rounded-full bg-primary mt-tight-margin opacity-0 transition-opacity"></span>
+    </button>
+    <button data-nav="todo" class="nav-btn flex flex-col items-center justify-center min-w-[44px] min-h-[44px] text-on-surface-variant transition-colors">
+      <span class="material-symbols-outlined text-[24px]">fact_check</span>
+      <span class="font-label-sm text-label-sm mt-tight-margin">To-do list</span>
+      <span class="nav-dot w-1.5 h-1.5 rounded-full bg-primary mt-tight-margin opacity-0 transition-opacity"></span>
+    </button>
+    <button data-nav="calendar" class="nav-btn flex flex-col items-center justify-center min-w-[44px] min-h-[44px] text-on-surface-variant transition-colors">
+      <span class="material-symbols-outlined text-[24px]">calendar_month</span>
+      <span class="font-label-sm text-label-sm mt-tight-margin">Calendar</span>
+      <span class="nav-dot w-1.5 h-1.5 rounded-full bg-primary mt-tight-margin opacity-0 transition-opacity"></span>
+    </button>
+    <button data-nav="goals" class="nav-btn flex flex-col items-center justify-center min-w-[44px] min-h-[44px] text-on-surface-variant transition-colors">
+      <span class="material-symbols-outlined text-[24px]">track_changes</span>
+      <span class="font-label-sm text-label-sm mt-tight-margin">Life goals</span>
+      <span class="nav-dot w-1.5 h-1.5 rounded-full bg-primary mt-tight-margin opacity-0 transition-opacity"></span>
+    </button>
+    <button data-nav="settings" class="nav-btn flex flex-col items-center justify-center min-w-[44px] min-h-[44px] text-on-surface-variant transition-colors">
+      <span class="material-symbols-outlined text-[24px]">settings</span>
+      <span class="font-label-sm text-label-sm mt-tight-margin">Settings</span>
+      <span class="nav-dot w-1.5 h-1.5 rounded-full bg-primary mt-tight-margin opacity-0 transition-opacity"></span>
+    </button>
+  </div>
+</nav>
+
+<!-- MODAL -->
+<div id="modal-backdrop" class="modal-backdrop fixed inset-0 z-50 bg-black/60 backdrop-blur-sm items-end justify-center">
+  <div id="modal-panel" class="w-full max-w-[420px] bg-surface-container-low rounded-t-[24px] p-card-padding pb-8 fade-in max-h-[85vh] overflow-y-auto no-scrollbar"></div>
+</div>
+
+<!-- TOAST -->
+<div id="toast" class="fixed left-1/2 -translate-x-1/2 bottom-24 z-[60] px-4 py-2.5 rounded-full bg-surface-container-highest text-on-surface font-label-md text-label-md shadow-lg opacity-0 pointer-events-none transition-opacity duration-300"></div>
+
+<script src="assets/js/app.js" defer></script>
+</body>
+</html>
