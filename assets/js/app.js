@@ -23,6 +23,47 @@ const storage = {
   }
 };
 
+/* ---------------------------------------------------------------------
+   Chargement des icônes personnalisées (assets/icones/) avec repli
+   automatique sur Material Symbols si le fichier est absent ou cassé.
+   Chaque élément marqué data-icon-src="..." dans le HTML est rempli ici :
+   on crée l'<img> en JS et on attache le listener d'erreur AVANT de fixer
+   le src, pour ne jamais manquer l'événement 'error' (pas de course
+   possible avec un onerror inline).
+--------------------------------------------------------------------- */
+function loadIcon(wrap){
+  const src = wrap.dataset.iconSrc;
+  const fallbackGlyph = wrap.dataset.iconFallback || 'circle';
+  const size = wrap.dataset.iconSize || '24';
+  if(!src) return;
+  const img = document.createElement('img');
+  img.alt = '';
+  img.draggable = false;
+  img.style.width = size + 'px';
+  img.style.height = size + 'px';
+  img.style.objectFit = 'contain';
+  img.style.display = 'block';
+  img.addEventListener('error', () => {
+    img.remove();
+    wrap.classList.add('icon-fallback');
+    const span = document.createElement('span');
+    span.className = 'material-symbols-outlined';
+    span.style.fontSize = size + 'px';
+    span.style.lineHeight = '1';
+    span.textContent = fallbackGlyph;
+    wrap.appendChild(span);
+  }, { once: true });
+  img.src = src;
+  wrap.appendChild(img);
+}
+function initIcons(){
+  document.querySelectorAll('[data-icon-src]').forEach(wrap => {
+    wrap.innerHTML = '';
+    wrap.classList.remove('icon-fallback');
+    loadIcon(wrap);
+  });
+}
+
 /* ===================== STATE ===================== */
 const now_ = new Date();
 const TODAY = new Date(now_.getFullYear(), now_.getMonth(), now_.getDate()); // vraie date du jour, à minuit local
@@ -1103,6 +1144,7 @@ function openEditProfileModal(){
 
 /* ===================== INIT ===================== */
 (async function init(){
+  initIcons();
   initAuthUI();
   const session = await loadSession();
   if(session){

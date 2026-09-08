@@ -20,13 +20,7 @@
   <div class="w-full max-w-[380px]">
     <div class="flex flex-col items-center mb-8">
       <div class="h-14 w-14 rounded-2xl p-[1.5px] bg-gradient-to-br from-primary to-tertiary mb-3">
-        <div class="h-full w-full rounded-[14px] bg-[#0e0e13] flex items-center justify-center">
-          <svg viewBox="0 0 24 24" class="w-7 h-7" fill="none" stroke="url(#logo-grad-login)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-            <defs><linearGradient id="logo-grad-login" x1="0" y1="0" x2="24" y2="24"><stop offset="0%" stop-color="#ffb0c9"/><stop offset="100%" stop-color="#e8d6b3"/></linearGradient></defs>
-            <path d="M3 11.5 12 4l9 7.5"/>
-            <path d="M5 10v9a1 1 0 0 0 1 1h3v-5h6v5h3a1 1 0 0 0 1-1v-9"/>
-          </svg>
-        </div>
+        <div class="icon-wrap h-full w-full rounded-[14px] bg-[#0e0e13] flex items-center justify-center" data-icon-src="assets/icones/logo.svg" data-icon-fallback="home" data-icon-size="28"></div>
       </div>
       <span class="font-label-sm text-label-sm tracking-widest text-primary font-bold">LISTMAX</span>
       <h1 id="auth-title" class="font-headline-lg text-headline-lg text-on-surface mt-2">Bon retour</h1>
@@ -69,13 +63,7 @@
   <div class="h-16 px-container-padding flex items-center justify-between">
     <div class="flex items-center gap-stack-gap">
       <div class="h-9 w-9 rounded-[10px] p-[1.5px] bg-gradient-to-br from-primary to-tertiary shrink-0">
-        <div class="h-full w-full rounded-[8.5px] bg-[#0e0e13] flex items-center justify-center">
-          <svg viewBox="0 0 24 24" class="w-[18px] h-[18px]" fill="none" stroke="url(#logo-grad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <defs><linearGradient id="logo-grad" x1="0" y1="0" x2="24" y2="24"><stop offset="0%" stop-color="#ffb0c9"/><stop offset="100%" stop-color="#e8d6b3"/></linearGradient></defs>
-            <path d="M3 11.5 12 4l9 7.5"/>
-            <path d="M5 10v9a1 1 0 0 0 1 1h3v-5h6v5h3a1 1 0 0 0 1-1v-9"/>
-          </svg>
-        </div>
+        <div class="icon-wrap h-full w-full rounded-[8.5px] bg-[#0e0e13] flex items-center justify-center" data-icon-src="assets/icones/logo.svg" data-icon-fallback="home" data-icon-size="18"></div>
       </div>
       <div class="flex flex-col">
         <span class="font-label-sm text-label-sm tracking-widest text-primary font-bold">LISTMAX</span>
@@ -110,27 +98,27 @@
 <nav id="app-nav" class="hidden fixed bottom-0 w-full z-40 pb-safe bg-surface/85 backdrop-blur-xl shadow-[0_-1px_12px_rgba(0,0,0,0.08)]">
   <div class="flex justify-around items-center h-16 px-container-padding">
     <button data-nav="home" class="nav-btn flex flex-col items-center justify-center min-w-[44px] min-h-[44px] text-on-surface-variant transition-colors">
-      <span class="material-symbols-outlined text-[24px]">home</span>
+      <span class="icon-wrap w-6 h-6 flex items-center justify-center" data-icon-src="assets/icones/nav-home.svg" data-icon-fallback="home" data-icon-size="24"></span>
       <span class="font-label-sm text-label-sm mt-tight-margin">Home</span>
       <span class="nav-dot w-1.5 h-1.5 rounded-full bg-primary mt-tight-margin opacity-0 transition-opacity"></span>
     </button>
     <button data-nav="todo" class="nav-btn flex flex-col items-center justify-center min-w-[44px] min-h-[44px] text-on-surface-variant transition-colors">
-      <span class="material-symbols-outlined text-[24px]">fact_check</span>
+      <span class="icon-wrap w-6 h-6 flex items-center justify-center" data-icon-src="assets/icones/nav-todo.svg" data-icon-fallback="fact_check" data-icon-size="24"></span>
       <span class="font-label-sm text-label-sm mt-tight-margin">To-do list</span>
       <span class="nav-dot w-1.5 h-1.5 rounded-full bg-primary mt-tight-margin opacity-0 transition-opacity"></span>
     </button>
     <button data-nav="calendar" class="nav-btn flex flex-col items-center justify-center min-w-[44px] min-h-[44px] text-on-surface-variant transition-colors">
-      <span class="material-symbols-outlined text-[24px]">calendar_month</span>
+      <span class="icon-wrap w-6 h-6 flex items-center justify-center" data-icon-src="assets/icones/nav-calendar.svg" data-icon-fallback="calendar_month" data-icon-size="24"></span>
       <span class="font-label-sm text-label-sm mt-tight-margin">Calendar</span>
       <span class="nav-dot w-1.5 h-1.5 rounded-full bg-primary mt-tight-margin opacity-0 transition-opacity"></span>
     </button>
     <button data-nav="goals" class="nav-btn flex flex-col items-center justify-center min-w-[44px] min-h-[44px] text-on-surface-variant transition-colors">
-      <span class="material-symbols-outlined text-[24px]">track_changes</span>
+      <span class="icon-wrap w-6 h-6 flex items-center justify-center" data-icon-src="assets/icones/nav-goals.svg" data-icon-fallback="track_changes" data-icon-size="24"></span>
       <span class="font-label-sm text-label-sm mt-tight-margin">Life goals</span>
       <span class="nav-dot w-1.5 h-1.5 rounded-full bg-primary mt-tight-margin opacity-0 transition-opacity"></span>
     </button>
     <button data-nav="settings" class="nav-btn flex flex-col items-center justify-center min-w-[44px] min-h-[44px] text-on-surface-variant transition-colors">
-      <span class="material-symbols-outlined text-[24px]">settings</span>
+      <span class="icon-wrap w-6 h-6 flex items-center justify-center" data-icon-src="assets/icones/nav-settings.svg" data-icon-fallback="settings" data-icon-size="24"></span>
       <span class="font-label-sm text-label-sm mt-tight-margin">Settings</span>
       <span class="nav-dot w-1.5 h-1.5 rounded-full bg-primary mt-tight-margin opacity-0 transition-opacity"></span>
     </button>

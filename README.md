@@ -25,11 +25,22 @@ listmax/
 │   ├── js/
 │   │   ├── tailwind.config.js  # Design tokens (couleurs, typographie, espacements)
 │   │   └── app.js              # Logique de l'application (état, rendu, stockage)
-│   └── img/                 # (vide) place pour icônes/captures à ajouter
+│   └── icones/               # Logo + icônes de nav — remplaçables manuellement
+│       ├── logo.svg
+│       ├── nav-home.svg, nav-todo.svg, nav-calendar.svg, nav-goals.svg, nav-settings.svg
+│       └── README.md         # Comment remplacer une icône
 ├── README.md
 ├── LICENSE
 └── .gitignore
 ```
+
+## 🖼️ Remplacer les icônes
+
+Les icônes actuelles dans `assets/icones/` sont des exemples. Remplace
+simplement les fichiers (même nom) par tes propres images — voir
+[`assets/icones/README.md`](./assets/icones/README.md) pour le détail.
+Si un fichier est manquant ou cassé, l'app affiche automatiquement une
+icône de secours : rien ne plante jamais.
 
 ## 🚀 Lancer le projet
 
