@@ -89,14 +89,149 @@ function emptyState(account){
     settings: { dailyGoal: 6, focusMinutes: 25, remindersEnabled: true, calendarView: 'Semaine', theme: 'Fuchsia Noir' },
     selectedDate: dstr(TODAY),
     tasks: [],
-    events: {},
-    reminders: [],
+    events: [],
+    activeGoalId: null,
     goals: []
   };
 }
 function initialsOf(name){ const p = (name||'').trim().split(/\s+/).filter(Boolean); return (p.map(w=>w[0]).slice(0,2).join('') || '??').toUpperCase(); }
 function formatMemberSince(dateStr){ try{ const d = new Date(dateStr+'T00:00:00'); return capitalize(d.toLocaleDateString('fr-FR',{month:'short', year:'numeric'})); }catch(e){ return ''; } }
 function simpleHash(str){ let h = 0; for(let i=0;i<str.length;i++){ h = (h<<5)-h + str.charCodeAt(i); h |= 0; } return 'h'+h; }
+
+// Anciennes sauvegardes stockaient les événements sous forme { 'YYYY-MM-DD': [...] }.
+// On migre vers un tableau plat d'événements (avec date d'ancrage), nécessaire
+// pour supporter la récurrence sans dupliquer les données.
+function migrateEventsIfNeeded(){
+  if(!state.events){ state.events = []; return; }
+  if(Array.isArray(state.events)) return;
+  const flat = [];
+  Object.keys(state.events).forEach(dateKey => {
+    (state.events[dateKey] || []).forEach(ev => {
+      flat.push({ ...ev, date: dateKey, recurrence: null, exceptions: [], allDay: false, location: ev.location || '' });
+    });
+  });
+  state.events = flat;
+}
+
+function dateDiffDays(dateStrA, dateStrB){
+  const a = new Date(dateStrA + 'T00:00:00Z');
+  const b = new Date(dateStrB + 'T00:00:00Z');
+  return Math.round((b - a) / 86400000);
+}
+function recurrenceLabel(r){
+  if(!r) return '';
+  const unit = { daily: 'jour', weekly: 'semaine', monthly: 'mois', yearly: 'an' }[r.freq];
+  const unitPlural = { daily: 'jours', weekly: 'semaines', monthly: 'mois', yearly: 'ans' }[r.freq];
+  const n = r.interval || 1;
+  return n > 1 ? `Tous les ${n} ${unitPlural}` : `Tous les ${r.freq==='daily'?'jours':r.freq==='weekly'?'semaines':r.freq==='monthly'?'mois':'ans'}`;
+}
+// Retourne les occurrences d'événements (récurrents compris) pour une date donnée.
+function getEventsForDate(dateStr){
+  const out = [];
+  (state.events || []).forEach(ev => {
+    if(ev.exceptions && ev.exceptions.includes(dateStr)) return;
+    if(!ev.recurrence){
+      if(ev.date === dateStr) out.push({ ...ev, occurrenceDate: dateStr });
+      return;
+    }
+    if(dateStr < ev.date) return;
+    if(ev.recurrence.until && dateStr > ev.recurrence.until) return;
+    const interval = ev.recurrence.interval || 1;
+    const diff = dateDiffDays(ev.date, dateStr);
+    let matches = false;
+    if(ev.recurrence.freq === 'daily'){
+      matches = diff % interval === 0;
+    } else if(ev.recurrence.freq === 'weekly'){
+      matches = diff % 7 === 0 && (diff / 7) % interval === 0;
+    } else if(ev.recurrence.freq === 'monthly'){
+      const start = new Date(ev.date + 'T00:00:00');
+      const cur = new Date(dateStr + 'T00:00:00');
+      if(start.getDate() === cur.getDate()){
+        const monthsDiff = (cur.getFullYear()-start.getFullYear())*12 + (cur.getMonth()-start.getMonth());
+        matches = monthsDiff >= 0 && monthsDiff % interval === 0;
+      }
+    } else if(ev.recurrence.freq === 'yearly'){
+      const start = new Date(ev.date + 'T00:00:00');
+      const cur = new Date(dateStr + 'T00:00:00');
+      if(start.getDate() === cur.getDate() && start.getMonth() === cur.getMonth()){
+        const yearsDiff = cur.getFullYear() - start.getFullYear();
+        matches = yearsDiff >= 0 && yearsDiff % interval === 0;
+      }
+    }
+    if(matches) out.push({ ...ev, occurrenceDate: dateStr });
+  });
+  return out;
+}
+function deleteEventSeries(masterId){
+  state.events = state.events.filter(e => e.id !== masterId);
+  saveState();
+}
+function deleteEventOccurrence(masterId, occurrenceDate){
+  const master = state.events.find(e => e.id === masterId);
+  if(!master) return;
+  if(!master.recurrence){ deleteEventSeries(masterId); return; }
+  if(!master.exceptions) master.exceptions = [];
+  master.exceptions.push(occurrenceDate);
+  saveState();
+}
+// Clic sur "supprimer" un événement : demande la portée (cette occurrence /
+// toute la série) si l'événement est récurrent, sinon supprime directement.
+function handleDeleteEventClick(masterId, occurrenceDate){
+  const master = state.events.find(e => e.id === masterId);
+  if(!master) return;
+  if(!master.recurrence){
+    deleteEventSeries(masterId);
+    renderCurrentPage(); toast('Événement supprimé');
+    return;
+  }
+  openModal(`
+    <h3 class="font-headline-md text-headline-md text-on-surface mb-1">Supprimer l'événement</h3>
+    <p class="font-body-md text-body-md text-on-surface-variant mb-4">Cet événement fait partie d'une série récurrente (${recurrenceLabel(master.recurrence)}).</p>
+    <div class="flex flex-col gap-2">
+      <button id="btn-del-occurrence" class="w-full py-3 rounded-xl bg-surface-container-high text-on-surface font-body-md text-body-md text-left px-4">Seulement cet événement</button>
+      <button id="btn-del-series" class="w-full py-3 rounded-xl bg-error/15 text-error font-body-md text-body-md text-left px-4 font-semibold">Toute la série</button>
+      <button data-action="close" class="w-full py-3 rounded-xl text-on-surface-variant font-body-md text-body-md">Annuler</button>
+    </div>
+  `);
+  document.querySelector('[data-action="close"]').addEventListener('click', closeModal);
+  document.getElementById('btn-del-occurrence').addEventListener('click', () => {
+    deleteEventOccurrence(masterId, occurrenceDate);
+    closeModal(); renderCurrentPage(); toast('Occurrence supprimée');
+  });
+  document.getElementById('btn-del-series').addEventListener('click', () => {
+    deleteEventSeries(masterId);
+    closeModal(); renderCurrentPage(); toast('Série supprimée');
+  });
+}
+function openEventDetailModal(masterId, occurrenceDate){
+  const master = state.events.find(e => e.id === masterId);
+  if(!master) return;
+  const d = new Date(occurrenceDate + 'T00:00:00');
+  openModal(`
+    <div class="flex items-center justify-between mb-3">
+      <span class="px-2 py-0.5 rounded-full ${catBadge(master.category)} font-label-sm text-label-sm font-semibold uppercase">${master.category}</span>
+      <button data-action="close" class="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant"><span class="material-symbols-outlined text-[18px]">close</span></button>
+    </div>
+    <h3 class="font-headline-lg text-headline-lg text-on-surface mb-1">${master.title}</h3>
+    <p class="font-label-md text-label-md text-on-surface-variant capitalize mb-2">${d.toLocaleDateString('fr-FR',{weekday:'long', day:'numeric', month:'long'})} · ${master.allDay ? 'Toute la journée' : `${master.start} - ${master.end}`}</p>
+    ${master.location ? `<p class="font-body-md text-body-md text-on-surface-variant flex items-center gap-1.5 mb-1"><span class="material-symbols-outlined text-[16px]">location_on</span>${master.location}</p>` : ''}
+    ${master.desc ? `<p class="font-body-md text-body-md text-on-surface-variant mt-2">${master.desc}</p>` : ''}
+    ${master.recurrence ? `<p class="font-label-sm text-label-sm text-primary flex items-center gap-1.5 mt-3"><span class="material-symbols-outlined text-[14px]">repeat</span>${recurrenceLabel(master.recurrence)}${master.recurrence.until ? ` · jusqu'au ${formatDueDate(master.recurrence.until)}` : ''}</p>` : ''}
+    <div class="flex gap-2 mt-5">
+      <button id="btn-edit-event" class="flex-1 py-3 rounded-xl bg-surface-container-high text-on-surface font-body-md text-body-md font-semibold">Modifier</button>
+      <button id="btn-delete-event" class="flex-1 py-3 rounded-xl bg-error/15 text-error font-body-md text-body-md font-semibold">Supprimer</button>
+    </div>
+  `);
+  document.querySelector('[data-action="close"]').addEventListener('click', closeModal);
+  document.getElementById('btn-edit-event').addEventListener('click', () => {
+    closeModal();
+    openAddEventModal(occurrenceDate, masterId);
+  });
+  document.getElementById('btn-delete-event').addEventListener('click', () => {
+    closeModal();
+    handleDeleteEventClick(masterId, occurrenceDate);
+  });
+}
 
 /* ----- account / session storage (client-side demo auth, no real backend) ----- */
 const ACCOUNTS_KEY = 'listmax_accounts_v1';
@@ -135,7 +270,9 @@ async function loginAs(account){
   await saveSession(currentEmail);
   const loaded = await loadUserState(currentEmail);
   state = loaded || emptyState(account);
-  if(!state.reminders) state.reminders = [];
+  if(state.activeGoalId === undefined) state.activeGoalId = null;
+  migrateEventsIfNeeded();
+  syncLongTermDueTasks();
   await saveState();
   showApp();
   setActivePage('home');
@@ -312,12 +449,70 @@ function priorityLabel(p){
   return p === 'haute' ? 'Priorité Haute' : p === 'normale' ? 'Normale' : 'Basse';
 }
 
+/* ---- Home helpers: greeting, score, "next" highlight ---- */
+const GREETINGS_MORNING = ['Prête à commencer la journée ?', 'Ta journée démarre maintenant.', 'Voici ton programme du matin.'];
+const GREETINGS_DAY = ["Voici ton programme d'aujourd'hui.", 'Encore un pas vers tes objectifs.', 'Ça avance bien aujourd\u2019hui.'];
+const GREETINGS_EVENING = ['Encore quelques efforts avant ce soir.', 'La journée touche à sa fin, en beauté.', 'Un dernier coup d\u2019œil sur ta journée.'];
+function pickGreeting(){
+  const h = new Date().getHours();
+  const pool = h < 12 ? GREETINGS_MORNING : (h < 18 ? GREETINGS_DAY : GREETINGS_EVENING);
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+// Score sur 100 : moyenne uniquement des catégories pour lesquelles il existe
+// vraiment une donnée aujourd'hui (tâches du jour créées, et/ou un objectif
+// actif défini). Une catégorie vide est ignorée, jamais comptée comme "ratée" —
+// donc null (pas 0) si rien n'existe encore à évaluer.
+function computeHomeScore(){
+  const todays = state.tasks.filter(t => t.list === 'today');
+  const parts = [];
+  if(todays.length) parts.push(todays.filter(t => t.done).length / todays.length);
+  const focusGoal = state.activeGoalId ? state.goals.find(g => g.id === state.activeGoalId) : null;
+  if(focusGoal) parts.push((focusGoal.progress || 0) / 100);
+  if(!parts.length) return null;
+  return Math.round((parts.reduce((a,b) => a+b, 0) / parts.length) * 100);
+}
+function homeScoreNote(score){
+  if(score === null) return "Ajoute une tâche ou définis un objectif actif pour voir ton score.";
+  if(score >= 80) return 'Belle journée, continue comme ça !';
+  if(score >= 50) return 'Bien avancé — encore un peu de chemin.';
+  return 'La journée ne fait que commencer.';
+}
+function parseTaskTimeToMinutes(str){
+  if(!str) return null;
+  const m = /^(\d{1,2})h(\d{2})$/.exec(str.trim());
+  if(!m) return null;
+  return parseInt(m[1],10)*60 + parseInt(m[2],10);
+}
+// Prochain élément à venir aujourd'hui parmi les tâches du jour (avec horaire,
+// non terminées) et les événements du calendrier — tous mélangés et triés par
+// heure. Retourne null s'il n'y a plus rien de prévu pour la suite de la journée.
+function pickNextHighlight(){
+  const now = new Date();
+  const nowMinutes = now.getHours()*60 + now.getMinutes();
+  const candidates = [];
+  state.tasks.filter(t => t.list === 'today' && !t.done && t.time).forEach(t => {
+    const mins = parseTaskTimeToMinutes(t.time);
+    if(mins !== null) candidates.push({ kind: 'task', id: t.id, title: t.text, timeLabel: t.time, minutes: mins, tab: 'todo' });
+  });
+  getEventsForDate(dstr(TODAY)).filter(e => !e.allDay).forEach(e => {
+    candidates.push({ kind: 'event', id: e.id, title: e.title, timeLabel: e.start, minutes: toMin(e.start), tab: 'calendar' });
+  });
+  const upcoming = candidates.filter(c => c.minutes >= nowMinutes).sort((a,b) => a.minutes - b.minutes);
+  if(!upcoming.length) return null;
+  const chosen = upcoming[0];
+  return { ...chosen, imminent: (chosen.minutes - nowMinutes) <= 60 };
+}
+
 function renderHome(){
   const todays = state.tasks.filter(t => t.list === 'today');
   const done = todays.filter(t => t.done).length;
   const pending = todays.filter(t => !t.done);
-  const score = Math.min(100, Math.round((done / Math.max(1, state.settings.dailyGoal)) * 100));
-  const current = pending[0];
+  const score = computeHomeScore();
+  const scorePct = score === null ? 0 : score;
+  const focusGoal = state.activeGoalId ? state.goals.find(g => g.id === state.activeGoalId) : null;
+  const todaysEventCount = getEventsForDate(dstr(TODAY)).length;
+  const next = pickNextHighlight();
   const dateFmt = TODAY.toLocaleDateString('fr-FR', { weekday: 'long', day: '2-digit', month: 'long' }).toUpperCase();
   const weekNum = isoWeekNumber(TODAY);
 
@@ -328,117 +523,120 @@ function renderHome(){
       <span class="px-2.5 py-1 rounded-full bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm">Semaine ${weekNum}</span>
     </div>
     <h1 class="font-display text-display text-on-surface mt-1">Bonjour, ${state.user.name.split(' ')[0]}</h1>
-    <p class="font-body-lg text-body-lg text-on-surface-variant mt-1 mb-5">Prête à maximiser ta journée ?</p>
+    <p class="font-body-lg text-body-lg text-on-surface-variant mt-1 mb-5">${pickGreeting()}</p>
 
     <div class="rounded-[20px] bg-surface-container p-card-padding border border-white/[0.06]">
       <div class="flex items-start justify-between">
         <div>
           <span class="font-label-sm text-label-sm text-on-surface-variant tracking-wider">SCORE D'ACCOMPLISSEMENT</span>
           <div class="flex items-baseline gap-1.5 mt-1">
-            <span class="font-display text-display text-on-surface">${score}</span>
-            <span class="font-headline-md text-headline-md text-on-surface-variant">/100</span>
-            <span class="ml-1 px-2 py-0.5 rounded-full bg-primary-container/20 text-primary font-label-sm text-label-sm font-semibold">↗ ${done}/${state.settings.dailyGoal} tâches</span>
+            <span class="font-display text-display text-on-surface">${score === null ? '—' : score}</span>
+            ${score !== null ? '<span class="font-headline-md text-headline-md text-on-surface-variant">/100</span>' : ''}
           </div>
+          <p class="font-label-md text-label-md text-on-surface-variant mt-1">${homeScoreNote(score)}</p>
         </div>
         <div class="w-11 h-11 rounded-full bg-surface-container-high flex items-center justify-center shrink-0">
           <span class="material-symbols-outlined text-primary text-[22px]">insights</span>
         </div>
       </div>
-      <div class="mt-4">
-        <div class="flex items-center justify-between mb-1.5">
-          <span class="font-label-md text-label-md text-on-surface-variant">Objectif quotidien</span>
-          <span class="font-label-md text-label-md text-on-surface font-semibold">${score}%</span>
-        </div>
-        <div class="h-1.5 w-full rounded-full bg-surface-container-highest overflow-hidden">
-          <div class="h-full rounded-full bg-gradient-to-r from-primary to-secondary" style="width:${score}%"></div>
-        </div>
+      <div class="h-1.5 w-full rounded-full bg-surface-container-highest overflow-hidden mt-4">
+        <div class="h-full rounded-full bg-gradient-to-r from-primary to-secondary" style="width:${scorePct}%"></div>
       </div>
       <div class="mt-4 pt-4 border-t border-white/[0.06] grid grid-cols-3 gap-2 text-center">
-        <div><span class="font-label-sm text-label-sm text-on-surface-variant block mb-0.5">Terminées</span><span class="font-headline-md text-headline-md text-on-surface font-bold">${done}</span></div>
+        <div><span class="font-label-sm text-label-sm text-on-surface-variant block mb-0.5">Terminées</span><span class="font-headline-md text-headline-md text-on-surface font-bold">${done}${todays.length ? `/${state.settings.dailyGoal}` : ''}</span></div>
         <div><span class="font-label-sm text-label-sm text-on-surface-variant block mb-0.5">Restantes</span><span class="font-headline-md text-headline-md text-primary font-bold">${pending.length}</span></div>
         <div><span class="font-label-sm text-label-sm text-on-surface-variant block mb-0.5">Focus</span><span class="font-headline-md text-headline-md text-on-surface font-bold">${state.settings.focusMinutes}min</span></div>
       </div>
     </div>
 
-    <div class="flex items-center justify-between mt-6 mb-2">
-      <span class="font-label-sm text-label-sm text-on-surface-variant tracking-wider">EN CE MOMENT</span>
-      <span class="font-label-sm text-label-sm text-primary flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-primary"></span>${current ? 'En cours' : 'Journée libre'}</span>
-    </div>
-    ${current ? `
-    <div class="rounded-[20px] bg-surface-container-high p-card-padding border border-primary/25 shadow-[0_0_24px_rgba(255,31,143,0.08)]">
+    ${next ? `
+    <div class="mt-5 rounded-[20px] bg-surface-container-high p-card-padding border border-primary/25 shadow-[0_0_24px_rgba(255,31,143,0.08)] cursor-pointer" data-action="go-next" data-tab="${next.tab}">
       <div class="flex items-center gap-1.5 mb-1.5">
-        <span class="px-2 py-0.5 rounded-full bg-primary-container/25 text-primary font-label-sm text-label-sm font-semibold uppercase">${priorityLabel(current.priority)}</span>
-        <span class="font-label-sm text-label-sm text-on-surface-variant">${current.category}</span>
+        <span class="px-2 py-0.5 rounded-full bg-primary-container/25 text-primary font-label-sm text-label-sm font-semibold uppercase">Next</span>
+        <span class="font-label-sm text-label-sm text-on-surface-variant">${next.kind === 'task' ? 'Tâche' : 'Événement'}</span>
       </div>
-      <h3 class="font-headline-md text-headline-md text-on-surface">${current.text}</h3>
+      <h3 class="font-headline-md text-headline-md text-on-surface">${next.title}</h3>
       <div class="flex items-center gap-1.5 mt-2 text-on-surface-variant">
         <span class="material-symbols-outlined text-[16px]">schedule</span>
-        <span class="font-label-md text-label-md">${current.time || 'Sans horaire'}</span>
+        <span class="font-label-md text-label-md">Aujourd'hui · ${next.timeLabel}</span>
       </div>
+      ${next.kind === 'task' ? `
       <div class="flex gap-2 mt-4">
-        <button data-action="snooze-task" data-id="${current.id}" class="flex-1 py-2.5 rounded-xl bg-surface-container text-on-surface-variant font-body-md text-body-md flex items-center justify-center gap-1.5 active:scale-95 transition-transform"><span class="material-symbols-outlined text-[18px]">history</span>Reporter</button>
-        <button data-action="complete-task" data-id="${current.id}" class="flex-1 py-2.5 rounded-xl bg-primary text-on-primary font-body-md text-body-md font-semibold flex items-center justify-center gap-1.5 active:scale-95 transition-transform"><span class="material-symbols-outlined text-[18px]">check</span>Terminer</button>
-      </div>
-    </div>` : `
-    <div class="rounded-[20px] bg-surface-container p-card-padding text-center">
-      ${todays.length === 0 ? `
+        <button data-action="snooze-task" data-id="${next.id}" class="flex-1 py-2.5 rounded-xl bg-surface-container text-on-surface-variant font-body-md text-body-md flex items-center justify-center gap-1.5 active:scale-95 transition-transform"><span class="material-symbols-outlined text-[18px]">history</span>Reporter</button>
+        <button data-action="complete-task" data-id="${next.id}" class="flex-1 py-2.5 rounded-xl bg-primary text-on-primary font-body-md text-body-md font-semibold flex items-center justify-center gap-1.5 active:scale-95 transition-transform"><span class="material-symbols-outlined text-[18px]">check</span>Terminer</button>
+      </div>` : ''}
+    </div>
+    ${next.imminent && state.settings.remindersEnabled ? `
+    <div class="mt-2.5 rounded-2xl bg-primary/10 border border-primary/25 p-3.5 flex items-center gap-2.5">
+      <span class="material-symbols-outlined text-primary text-[18px]">notifications_active</span>
+      <p class="font-label-md text-label-md text-on-surface">C'est bientôt : <strong>${next.title}</strong> à ${next.timeLabel}.</p>
+    </div>` : ''}
+    ` : todays.length === 0 ? `
+    <div class="mt-5 rounded-[20px] bg-surface-container p-card-padding text-center">
       <p class="font-body-md text-body-md text-on-surface-variant mb-3">Aucune tâche pour l'instant. Ajoute ta première tâche pour lancer ta journée.</p>
       <button data-action="open-add-task" class="px-4 py-2 rounded-xl bg-primary text-on-primary font-body-md text-body-md font-semibold inline-flex items-center gap-1.5"><span class="material-symbols-outlined text-[16px]">add</span>Ajouter une tâche</button>
-      ` : `<p class="font-body-md text-body-md text-on-surface-variant">Toutes les tâches du jour sont terminées. Belle journée !</p>`}
+    </div>` : `
+    <div class="mt-5 rounded-[20px] bg-surface-container p-card-padding text-center">
+      <p class="font-body-md text-body-md text-on-surface-variant">Rien de prévu pour la suite de la journée. Belle journée !</p>
     </div>`}
 
-    <div class="grid grid-cols-3 gap-2.5 mt-5">
-      <button data-nav-to="todo" class="quick-nav rounded-2xl bg-surface-container p-3 flex flex-col gap-2 active:scale-95 transition-transform text-left">
-        <div class="w-9 h-9 rounded-full bg-surface-container-high flex items-center justify-center text-primary"><span class="material-symbols-outlined text-[18px]">task_alt</span></div>
-        <span class="font-label-sm text-label-sm text-on-surface-variant">Tâches</span>
-        <span class="font-headline-md text-headline-md text-on-surface leading-tight">${pending.length} resta...</span>
+    <div class="flex items-center justify-between mt-6 mb-2">
+      <span class="font-label-sm text-label-sm text-on-surface-variant tracking-wider">AUJOURD'HUI</span>
+    </div>
+    <div class="flex flex-col gap-2 rounded-2xl bg-surface-container overflow-hidden divide-y divide-white/[0.06]">
+      <button data-nav-to="todo" class="w-full p-3.5 flex items-center gap-3 text-left active:bg-surface-container-high transition-colors">
+        <div class="w-9 h-9 rounded-full bg-surface-container-high flex items-center justify-center text-primary shrink-0"><span class="material-symbols-outlined text-[18px]">task_alt</span></div>
+        <div class="min-w-0 flex-1">
+          <p class="font-body-md text-body-md text-on-surface">${todays.length ? `${done}/${todays.length} tâches terminées` : 'Aucune tâche aujourd\u2019hui'}</p>
+        </div>
+        <span class="material-symbols-outlined text-on-surface-variant text-[18px]">chevron_right</span>
       </button>
-      <button data-nav-to="calendar" class="quick-nav rounded-2xl bg-surface-container p-3 flex flex-col gap-2 active:scale-95 transition-transform text-left">
+      <button data-nav-to="goals" class="w-full p-3.5 flex items-center gap-3 text-left active:bg-surface-container-high transition-colors">
+        <div class="w-9 h-9 rounded-full bg-surface-container-high flex items-center justify-center text-tertiary shrink-0"><span class="material-symbols-outlined text-[18px]">track_changes</span></div>
+        <div class="min-w-0 flex-1">
+          <p class="font-body-md text-body-md text-on-surface truncate">${focusGoal ? focusGoal.title : 'Aucun objectif actif — en choisir un'}</p>
+        </div>
+        ${focusGoal ? `<span class="font-label-md text-label-md text-on-surface-variant shrink-0">${focusGoal.progress}%</span>` : ''}
+        <span class="material-symbols-outlined text-on-surface-variant text-[18px]">chevron_right</span>
+      </button>
+      <button data-nav-to="calendar" class="w-full p-3.5 flex items-center gap-3 text-left active:bg-surface-container-high transition-colors">
+        <div class="w-9 h-9 rounded-full bg-surface-container-high flex items-center justify-center text-secondary shrink-0"><span class="material-symbols-outlined text-[18px]">event</span></div>
+        <div class="min-w-0 flex-1">
+          <p class="font-body-md text-body-md text-on-surface">${todaysEventCount ? `${todaysEventCount} événement${todaysEventCount>1?'s':''} aujourd'hui` : 'Rien dans l\u2019agenda aujourd\u2019hui'}</p>
+        </div>
+        <span class="material-symbols-outlined text-on-surface-variant text-[18px]">chevron_right</span>
+      </button>
+    </div>
+
+    <div class="flex items-center justify-between mt-6 mb-2">
+      <span class="font-label-sm text-label-sm text-on-surface-variant tracking-wider">ACTIONS RAPIDES</span>
+    </div>
+    <div class="grid grid-cols-3 gap-2.5">
+      <button data-action="open-add-task" class="quick-nav rounded-2xl bg-surface-container p-3 flex flex-col gap-2 active:scale-95 transition-transform text-left">
+        <div class="w-9 h-9 rounded-full bg-surface-container-high flex items-center justify-center text-primary"><span class="material-symbols-outlined text-[18px]">add_task</span></div>
+        <span class="font-label-sm text-label-sm text-on-surface-variant leading-tight">Nouvelle tâche</span>
+      </button>
+      <button data-action="quick-add-event" class="quick-nav rounded-2xl bg-surface-container p-3 flex flex-col gap-2 active:scale-95 transition-transform text-left">
         <div class="w-9 h-9 rounded-full bg-surface-container-high flex items-center justify-center text-tertiary"><span class="material-symbols-outlined text-[18px]">event</span></div>
-        <span class="font-label-sm text-label-sm text-on-surface-variant">Agenda</span>
-        <span class="font-headline-md text-headline-md text-on-surface leading-tight">${(state.events[dstr(TODAY)]||[])[0]?.start || '--:--'}</span>
+        <span class="font-label-sm text-label-sm text-on-surface-variant leading-tight">Nouvel événement</span>
       </button>
       <button data-action="start-focus" class="quick-nav rounded-2xl bg-surface-container p-3 flex flex-col gap-2 active:scale-95 transition-transform text-left">
         <div class="w-9 h-9 rounded-full bg-surface-container-high flex items-center justify-center text-secondary"><span class="material-symbols-outlined text-[18px]">timer</span></div>
-        <span class="font-label-sm text-label-sm text-on-surface-variant">Pomodoro</span>
-        <span class="font-headline-md text-headline-md text-on-surface leading-tight">Lancer focus</span>
+        <span class="font-label-sm text-label-sm text-on-surface-variant leading-tight">Lancer focus</span>
       </button>
     </div>
-
-    <div class="flex items-center justify-between mt-6 mb-2">
-      <span class="font-label-sm text-label-sm text-on-surface-variant tracking-wider">RAPPELS PRIORITAIRES</span>
-      ${state.reminders.length ? `<button data-nav-to="todo" class="font-label-sm text-label-sm text-primary">Voir tout (${state.reminders.length})</button>` : ''}
-    </div>
-    ${state.reminders.length === 0 ? `
-    <div class="rounded-2xl bg-surface-container p-4 text-center">
-      <p class="font-label-sm text-label-sm text-on-surface-variant">Aucun rappel pour l'instant. Les tâches à échéance proche apparaîtront ici.</p>
-    </div>` : `
-    <div class="flex flex-col gap-2.5">
-      ${state.reminders.map(r => `
-      <div class="rounded-2xl bg-surface-container p-3.5 flex items-center gap-3">
-        <input type="checkbox" data-action="dismiss-reminder" data-id="${r.id}" class="task-check w-5 h-5 rounded-full border-2 border-outline-variant shrink-0 cursor-pointer"/>
-        <div class="min-w-0 flex-1">
-          <p class="font-body-md text-body-md text-on-surface truncate">${r.text}</p>
-          <p class="font-label-sm text-label-sm text-on-surface-variant mt-0.5">${r.when} · ${r.tag}</p>
-        </div>
-        <span class="px-2 py-0.5 rounded-full bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm shrink-0">${r.badge}</span>
-      </div>`).join('')}
-    </div>`}
-
-    <button data-action="open-add-task" class="mt-6 w-full py-3.5 rounded-xl bg-primary text-on-primary font-headline-md text-headline-md font-semibold flex items-center justify-center gap-2 shadow-[0_4px_24px_rgba(255,176,201,0.25)] active:scale-[0.98] transition-all">
-      <span class="material-symbols-outlined text-[22px]">add</span><span>Nouvelle tâche</span>
-    </button>
   `;
 
   el.querySelectorAll('[data-nav-to]').forEach(b => b.addEventListener('click', () => setActivePage(b.dataset.navTo)));
   el.querySelectorAll('[data-action="open-add-task"]').forEach(b => b.addEventListener('click', () => openAddTaskModal('today')));
+  el.querySelector('[data-action="quick-add-event"]')?.addEventListener('click', () => openAddEventModal(dstr(TODAY)));
   el.querySelector('[data-action="start-focus"]')?.addEventListener('click', () => toast(`Session focus de ${state.settings.focusMinutes} min lancée`));
-  el.querySelectorAll('[data-action="complete-task"]').forEach(b => b.addEventListener('click', () => { toggleTask(b.dataset.id); }));
-  el.querySelectorAll('[data-action="snooze-task"]').forEach(b => b.addEventListener('click', () => { toast('Tâche reportée de 30 min'); }));
-  el.querySelectorAll('[data-action="dismiss-reminder"]').forEach(b => b.addEventListener('click', () => {
-    state.reminders = state.reminders.filter(r => r.id !== b.dataset.id);
-    saveState(); renderHome(); toast('Rappel traité');
-  }));
+  el.querySelector('[data-action="go-next"]')?.addEventListener('click', (e) => {
+    if(e.target.closest('[data-action="complete-task"]') || e.target.closest('[data-action="snooze-task"]')) return;
+    setActivePage(e.currentTarget.dataset.tab);
+  });
+  el.querySelectorAll('[data-action="complete-task"]').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); toggleTask(b.dataset.id); }));
+  el.querySelectorAll('[data-action="snooze-task"]').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); toast('Tâche reportée de 30 min'); }));
 }
 
 function toggleTask(id){
@@ -453,8 +651,175 @@ function toggleTask(id){
 /* ===================== TODO ===================== */
 let todoTab = 'today'; // today | longterme | done
 let todoPriorityFilter = 'toutes';
+let todoSearch = '';
+let expandedTasks = new Set();
+
+// Fait basculer automatiquement vers "Aujourd'hui" toute tâche Long Terme
+// dont l'échéance est arrivée (aujourd'hui ou dépassée). Appelé au chargement,
+// à chaque ouverture de l'onglet, et périodiquement (voir setInterval en bas).
+function syncLongTermDueTasks(){
+  const todayStr = dstr(TODAY);
+  let moved = 0;
+  state.tasks.forEach(t => {
+    if(t.list === 'longterme' && t.dueDate && t.dueDate <= todayStr){
+      t.list = 'today';
+      t.date = todayStr;
+      moved++;
+    }
+  });
+  if(moved) saveState();
+  return moved;
+}
+function formatDueDate(d){
+  try{ const dt = new Date(d + 'T00:00:00'); return dt.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }); }
+  catch(e){ return d; }
+}
+function escapeAttr(s){ return String(s == null ? '' : s).replace(/"/g, '&quot;'); }
+function timeToInputVal(t){ if(!t) return ''; const m = /^(\d{1,2})h(\d{2})$/.exec(t); return m ? `${m[1].padStart(2,'0')}:${m[2]}` : ''; }
+function inputValToTime(v){ if(!v) return ''; const [h,m] = v.split(':'); return `${parseInt(h,10)}h${m}`; }
+
+function moveTaskInList(visibleList, id, dir){
+  const pos = visibleList.findIndex(t => t.id === id);
+  const targetPos = pos + dir;
+  if(pos === -1 || targetPos < 0 || targetPos >= visibleList.length) return;
+  const idxA = state.tasks.findIndex(t => t.id === visibleList[pos].id);
+  const idxB = state.tasks.findIndex(t => t.id === visibleList[targetPos].id);
+  if(idxA === -1 || idxB === -1) return;
+  [state.tasks[idxA], state.tasks[idxB]] = [state.tasks[idxB], state.tasks[idxA]];
+  saveState(); renderTodo();
+}
+function addSubtask(taskId, text){
+  const t = state.tasks.find(x => x.id === taskId);
+  if(!t || !text.trim()) return;
+  if(!t.subtasks) t.subtasks = [];
+  t.subtasks.push({ id: uid(), text: text.trim(), done: false });
+  saveState(); renderTodo();
+}
+function toggleSubtask(taskId, subId){
+  const t = state.tasks.find(x => x.id === taskId);
+  const s = t && (t.subtasks || []).find(s => s.id === subId);
+  if(!s) return;
+  s.done = !s.done; saveState(); renderTodo();
+}
+function delSubtask(taskId, subId){
+  const t = state.tasks.find(x => x.id === taskId);
+  if(!t) return;
+  t.subtasks = (t.subtasks || []).filter(s => s.id !== subId);
+  saveState(); renderTodo();
+}
+
+function subtaskPanelHtml(t){
+  const subs = t.subtasks || [];
+  return `
+    <div class="px-3.5 pb-3.5 pt-1">
+      ${subs.map(s => `
+      <div class="flex items-center gap-2 py-1.5 pl-8">
+        <button data-action="toggle-subtask" data-task="${t.id}" data-sub="${s.id}" class="w-5 h-5 rounded-full border-2 ${s.done ? 'bg-primary border-primary' : 'border-outline-variant'} flex items-center justify-center shrink-0 transition-colors">
+          ${s.done ? '<span class="material-symbols-outlined text-on-primary text-[12px]">check</span>' : ''}
+        </button>
+        <span class="font-label-md text-label-md flex-1 ${s.done ? 'line-through text-on-surface-variant' : 'text-on-surface'}">${s.text}</span>
+        <button data-action="del-subtask" data-task="${t.id}" data-sub="${s.id}" class="w-6 h-6 rounded-full flex items-center justify-center text-on-surface-variant shrink-0"><span class="material-symbols-outlined text-[14px]">close</span></button>
+      </div>`).join('')}
+      <div class="flex items-center gap-2 mt-1 pl-8">
+        <input type="text" data-subtask-input="${t.id}" placeholder="Ajouter une sous-tâche..." class="flex-1 bg-surface-container-highest/50 rounded-lg px-2.5 py-1.5 outline-none font-label-md text-label-md text-on-surface placeholder:text-on-surface-variant"/>
+        <button data-action="add-subtask" data-task="${t.id}" class="w-7 h-7 rounded-lg bg-surface-container-high flex items-center justify-center text-on-surface-variant shrink-0"><span class="material-symbols-outlined text-[16px]">add</span></button>
+      </div>
+    </div>`;
+}
+
+function taskRowHtml(t, idx, list){
+  const subs = t.subtasks || [];
+  const expanded = expandedTasks.has(t.id);
+  return `
+  <div class="rounded-2xl bg-surface-container overflow-hidden">
+    <div class="p-3.5 flex items-center gap-2">
+      <div class="flex flex-col gap-0.5 shrink-0">
+        <button data-action="move-up" data-id="${t.id}" ${idx===0?'disabled':''} class="w-5 h-4 rounded flex items-center justify-center text-on-surface-variant ${idx===0?'opacity-30':'active:scale-90'} transition-transform"><span class="material-symbols-outlined text-[14px]">keyboard_arrow_up</span></button>
+        <button data-action="move-down" data-id="${t.id}" ${idx===list.length-1?'disabled':''} class="w-5 h-4 rounded flex items-center justify-center text-on-surface-variant ${idx===list.length-1?'opacity-30':'active:scale-90'} transition-transform"><span class="material-symbols-outlined text-[14px]">keyboard_arrow_down</span></button>
+      </div>
+      <button data-action="toggle" data-id="${t.id}" class="w-6 h-6 rounded-full border-2 ${t.done ? 'bg-primary border-primary' : 'border-outline-variant'} flex items-center justify-center shrink-0 transition-colors">
+        ${t.done ? '<span class="material-symbols-outlined text-on-primary text-[16px]">check</span>' : ''}
+      </button>
+      <div class="min-w-0 flex-1">
+        <p class="font-body-md text-body-md ${t.done ? 'line-through text-on-surface-variant' : 'text-on-surface'} truncate">${t.text}</p>
+        <div class="flex items-center gap-1.5 mt-0.5 flex-wrap">
+          <span class="w-1.5 h-1.5 rounded-full ${priorityDot(t.priority)} inline-block"></span>
+          <span class="font-label-sm text-label-sm text-on-surface-variant">${priorityLabel(t.priority)}</span>
+          ${t.category ? `<span class="font-label-sm text-label-sm text-on-surface-variant">·</span><span class="px-1.5 py-0.5 rounded-full bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm">${t.category}</span>` : ''}
+          ${t.list === 'longterme' && t.dueDate ? `<span class="font-label-sm text-label-sm text-on-surface-variant">·</span><span class="px-1.5 py-0.5 rounded-full bg-tertiary-container/25 text-tertiary font-label-sm text-label-sm flex items-center gap-1"><span class="material-symbols-outlined text-[12px]">event</span>${formatDueDate(t.dueDate)}</span>` : ''}
+          <button data-action="toggle-expand" data-id="${t.id}" class="ml-auto flex items-center gap-0.5 text-on-surface-variant font-label-sm text-label-sm shrink-0">
+            ${subs.length ? `${subs.filter(s=>s.done).length}/${subs.length}` : ''}
+            <span class="material-symbols-outlined text-[16px]">${expanded ? 'expand_less' : 'expand_more'}</span>
+          </button>
+        </div>
+      </div>
+      ${t.time ? `<span class="px-2 py-1 rounded-full bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm shrink-0">${t.time}</span>` : ''}
+      <button data-action="edit-task" data-id="${t.id}" class="w-7 h-7 rounded-full flex items-center justify-center text-on-surface-variant shrink-0"><span class="material-symbols-outlined text-[16px]">edit</span></button>
+      <button data-action="delete" data-id="${t.id}" class="w-7 h-7 rounded-full flex items-center justify-center text-on-surface-variant shrink-0"><span class="material-symbols-outlined text-[16px]">close</span></button>
+    </div>
+    ${expanded ? subtaskPanelHtml(t) : ''}
+  </div>`;
+}
+
+function openEditTaskModal(id){
+  const t = state.tasks.find(x => x.id === id);
+  if(!t) return;
+  const isLongterme = t.list === 'longterme';
+  let editedPriority = t.priority;
+  openModal(`
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="font-headline-lg text-headline-lg text-on-surface">Modifier la tâche</h3>
+      <button data-action="close" class="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant"><span class="material-symbols-outlined text-[18px]">close</span></button>
+    </div>
+    <div class="flex flex-col gap-3">
+      <input id="et-text" type="text" value="${escapeAttr(t.text)}" class="w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface focus:border-primary"/>
+      <input id="et-category" type="text" value="${escapeAttr(t.category||'')}" placeholder="Catégorie (optionnel)" class="w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant focus:border-primary"/>
+      <div class="flex items-center gap-2">
+        <span class="font-label-sm text-label-sm text-on-surface-variant">Priorité:</span>
+        <button data-etp="haute" class="et-p-dot w-6 h-6 rounded-full bg-primary ring-2 ring-offset-2 ring-offset-surface-container-low ${t.priority==='haute'?'ring-primary':'ring-transparent'}"></button>
+        <button data-etp="normale" class="et-p-dot w-6 h-6 rounded-full bg-tertiary ring-2 ring-offset-2 ring-offset-surface-container-low ${t.priority==='normale'?'ring-tertiary':'ring-transparent'}"></button>
+        <button data-etp="basse" class="et-p-dot w-6 h-6 rounded-full bg-outline-variant ring-2 ring-offset-2 ring-offset-surface-container-low ${t.priority==='basse'?'ring-outline-variant':'ring-transparent'}"></button>
+      </div>
+      ${!isLongterme ? `
+      <div>
+        <label class="font-label-sm text-label-sm text-on-surface-variant block mb-1.5">Heure (optionnel)</label>
+        <input id="et-time" type="time" value="${timeToInputVal(t.time)}" class="w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface focus:border-primary"/>
+      </div>` : `
+      <div>
+        <label class="font-label-sm text-label-sm text-on-surface-variant block mb-1.5">Échéance</label>
+        <input id="et-due" type="date" value="${t.dueDate||''}" class="w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface focus:border-primary"/>
+      </div>`}
+      <button id="btn-save-task-edit" class="mt-2 w-full py-3.5 rounded-xl bg-primary text-on-primary font-headline-md text-headline-md font-semibold active:scale-[0.98] transition-all">Enregistrer</button>
+    </div>
+  `);
+  document.querySelector('[data-action="close"]').addEventListener('click', closeModal);
+  document.querySelectorAll('.et-p-dot').forEach(b => b.addEventListener('click', () => {
+    editedPriority = b.dataset.etp;
+    document.querySelectorAll('.et-p-dot').forEach(x => x.classList.remove('ring-primary','ring-tertiary','ring-outline-variant'));
+    document.querySelectorAll('.et-p-dot').forEach(x => x.classList.add('ring-transparent'));
+    b.classList.remove('ring-transparent');
+    b.classList.add(editedPriority==='haute'?'ring-primary':editedPriority==='normale'?'ring-tertiary':'ring-outline-variant');
+  }));
+  document.getElementById('btn-save-task-edit').addEventListener('click', () => {
+    const newText = document.getElementById('et-text').value.trim();
+    if(!newText){ toast('Le titre ne peut pas être vide'); return; }
+    t.text = newText;
+    t.category = document.getElementById('et-category').value.trim();
+    t.priority = editedPriority;
+    if(!isLongterme){
+      const timeVal = document.getElementById('et-time').value;
+      t.time = timeVal ? inputValToTime(timeVal) : '';
+    } else {
+      t.dueDate = document.getElementById('et-due').value || '';
+    }
+    saveState();
+    syncLongTermDueTasks();
+    closeModal(); renderTodo(); toast('Tâche mise à jour');
+  });
+}
 
 function renderTodo(){
+  syncLongTermDueTasks();
   const el = document.getElementById('page-todo');
   const allToday = state.tasks.filter(t => t.list === 'today');
   const inProgress = allToday.filter(t => !t.done).length;
@@ -467,6 +832,7 @@ function renderTodo(){
   else list = allToday.filter(t => t.done);
 
   if(todoPriorityFilter !== 'toutes') list = list.filter(t => t.priority === todoPriorityFilter);
+  if(todoSearch.trim()) list = list.filter(t => t.text.toLowerCase().includes(todoSearch.trim().toLowerCase()));
 
   el.innerHTML = `
     <div class="pt-2">
@@ -482,7 +848,13 @@ function renderTodo(){
       </div>
     </div>
 
-    <div class="flex gap-2 mt-5 overflow-x-auto no-scrollbar">
+    <div class="mt-4 rounded-2xl bg-surface-container p-3 flex items-center gap-2.5">
+      <span class="material-symbols-outlined text-on-surface-variant text-[20px]">search</span>
+      <input id="todo-search" type="text" value="${escapeAttr(todoSearch)}" placeholder="Rechercher une tâche..." class="flex-1 bg-transparent outline-none font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant"/>
+      ${todoSearch ? `<button id="btn-clear-search" class="w-6 h-6 rounded-full flex items-center justify-center text-on-surface-variant shrink-0"><span class="material-symbols-outlined text-[16px]">close</span></button>` : ''}
+    </div>
+
+    <div class="flex gap-2 mt-3 overflow-x-auto no-scrollbar">
       ${['today','longterme','done'].map(k => `
         <button data-tab="${k}" class="todo-tab px-4 py-2 rounded-full font-label-md text-label-md whitespace-nowrap transition-colors ${todoTab===k ? 'bg-surface-container-highest text-on-surface font-semibold' : 'bg-surface-container text-on-surface-variant'}">
           ${k==='today'?"Aujourd'hui":k==='longterme'?'Long Terme':'Terminées'}
@@ -500,37 +872,24 @@ function renderTodo(){
       <span class="material-symbols-outlined text-primary text-[20px]">add_task</span>
       <input id="new-task-input" type="text" placeholder="Ajouter une tâche..." class="flex-1 bg-transparent outline-none font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant"/>
     </div>
-    <div class="flex items-center justify-between mt-2.5">
+    <div class="flex items-center justify-between mt-2.5 gap-2">
       <div class="flex items-center gap-2">
         <span class="font-label-sm text-label-sm text-on-surface-variant">Priorité:</span>
         <button data-newp="haute" class="new-p-dot w-5 h-5 rounded-full bg-primary ring-2 ring-offset-2 ring-offset-surface ring-primary transition-all"></button>
         <button data-newp="normale" class="new-p-dot w-5 h-5 rounded-full bg-tertiary ring-2 ring-offset-2 ring-offset-surface ring-transparent transition-all"></button>
         <button data-newp="basse" class="new-p-dot w-5 h-5 rounded-full bg-outline-variant ring-2 ring-offset-2 ring-offset-surface ring-transparent transition-all"></button>
       </div>
-      <button id="btn-add-task" class="w-10 h-10 rounded-xl bg-primary text-on-primary flex items-center justify-center active:scale-90 transition-transform"><span class="material-symbols-outlined text-[20px]">add</span></button>
+      ${todoTab === 'longterme' ? `<input id="new-task-due" type="date" title="Échéance (obligatoire)" class="bg-surface-container-highest/60 border border-white/10 rounded-lg px-2 py-1.5 outline-none font-label-md text-label-md text-on-surface focus:border-primary"/>` : ''}
+      <button id="btn-add-task" class="w-10 h-10 rounded-xl bg-primary text-on-primary flex items-center justify-center active:scale-90 transition-transform shrink-0"><span class="material-symbols-outlined text-[20px]">add</span></button>
     </div>
+    ${todoTab === 'longterme' ? `<p class="font-label-sm text-label-sm text-on-surface-variant mt-1.5">Une échéance est requise — la tâche rejoindra automatiquement "Aujourd'hui" le jour J.</p>` : ''}
 
     <div class="flex items-center justify-between mt-6 mb-2">
       <span class="font-label-sm text-label-sm text-on-surface-variant tracking-wider">${todoTab==='today' ? "À FAIRE AUJOURD'HUI" : todoTab==='longterme' ? 'OBJECTIFS LONG TERME' : 'TERMINÉES AUJOURD\u2019HUI'}</span>
       <span class="font-label-sm text-label-sm text-on-surface-variant">${list.length} ${todoTab==='done' ? 'tâches' : 'restantes'}</span>
     </div>
     <div class="flex flex-col gap-2.5" id="task-list">
-      ${list.length === 0 ? `<div class="rounded-2xl bg-surface-container p-6 text-center"><p class="font-body-md text-body-md text-on-surface-variant">Rien ici pour l'instant.</p></div>` : list.map(t => `
-      <div class="rounded-2xl bg-surface-container p-3.5 flex items-center gap-3">
-        <button data-action="toggle" data-id="${t.id}" class="w-6 h-6 rounded-full border-2 ${t.done ? 'bg-primary border-primary' : 'border-outline-variant'} flex items-center justify-center shrink-0 transition-colors">
-          ${t.done ? '<span class="material-symbols-outlined text-on-primary text-[16px]">check</span>' : ''}
-        </button>
-        <div class="min-w-0 flex-1">
-          <p class="font-body-md text-body-md ${t.done ? 'line-through text-on-surface-variant' : 'text-on-surface'} truncate">${t.text}</p>
-          <div class="flex items-center gap-1.5 mt-0.5">
-            <span class="w-1.5 h-1.5 rounded-full ${priorityDot(t.priority)} inline-block"></span>
-            <span class="font-label-sm text-label-sm text-on-surface-variant">${priorityLabel(t.priority)}</span>
-            ${t.category ? `<span class="font-label-sm text-label-sm text-on-surface-variant">·</span><span class="px-1.5 py-0.5 rounded-full bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm">${t.category}</span>` : ''}
-          </div>
-        </div>
-        ${t.time ? `<span class="px-2 py-1 rounded-full bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm shrink-0">${t.time}</span>` : ''}
-        <button data-action="delete" data-id="${t.id}" class="w-7 h-7 rounded-full flex items-center justify-center text-on-surface-variant shrink-0"><span class="material-symbols-outlined text-[16px]">close</span></button>
-      </div>`).join('')}
+      ${list.length === 0 ? `<div class="rounded-2xl bg-surface-container p-6 text-center"><p class="font-body-md text-body-md text-on-surface-variant">${todoSearch ? 'Aucun résultat pour cette recherche.' : "Rien ici pour l'instant."}</p></div>` : list.map((t, idx) => taskRowHtml(t, idx, list)).join('')}
     </div>
   `;
 
@@ -544,20 +903,56 @@ function renderTodo(){
     b.classList.remove('ring-transparent');
     b.classList.add(newPriority==='haute'?'ring-primary':newPriority==='normale'?'ring-tertiary':'ring-outline-variant');
   }));
+
+  let searchDebounce;
+  el.querySelector('#todo-search').addEventListener('input', (e) => {
+    clearTimeout(searchDebounce);
+    const val = e.target.value;
+    searchDebounce = setTimeout(() => { todoSearch = val; renderTodo(); setTimeout(() => { const inp = document.getElementById('todo-search'); if(inp){ inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); } }, 0); }, 250);
+  });
+  el.querySelector('#btn-clear-search')?.addEventListener('click', () => { todoSearch = ''; renderTodo(); });
+
   function addFromInput(){
     const input = document.getElementById('new-task-input');
     const text = input.value.trim();
     if(!text) return;
-    state.tasks.push({ id: uid(), text, priority: newPriority, category: '', time: '', done: false, list: todoTab==='longterme' ? 'longterme' : 'today', date: dstr(TODAY) });
+    let dueDate = '';
+    if(todoTab === 'longterme'){
+      const dueInput = document.getElementById('new-task-due');
+      dueDate = dueInput ? dueInput.value : '';
+      if(!dueDate){ toast('Ajoute une échéance pour cette tâche long terme'); return; }
+    }
+    state.tasks.push({ id: uid(), text, priority: newPriority, category: '', time: '', dueDate, subtasks: [], done: false, list: todoTab==='longterme' ? 'longterme' : 'today', date: dstr(TODAY) });
     input.value = '';
-    saveState(); renderTodo(); toast('Tâche ajoutée');
+    saveState();
+    syncLongTermDueTasks();
+    renderTodo(); toast('Tâche ajoutée');
   }
   el.querySelector('#btn-add-task').addEventListener('click', addFromInput);
   el.querySelector('#new-task-input').addEventListener('keydown', (e) => { if(e.key==='Enter') addFromInput(); });
+
   el.querySelectorAll('[data-action="toggle"]').forEach(b => b.addEventListener('click', () => toggleTask(b.dataset.id)));
   el.querySelectorAll('[data-action="delete"]').forEach(b => b.addEventListener('click', () => {
     state.tasks = state.tasks.filter(t => t.id !== b.dataset.id);
+    expandedTasks.delete(b.dataset.id);
     saveState(); renderTodo(); toast('Tâche supprimée');
+  }));
+  el.querySelectorAll('[data-action="edit-task"]').forEach(b => b.addEventListener('click', () => openEditTaskModal(b.dataset.id)));
+  el.querySelectorAll('[data-action="move-up"]').forEach(b => b.addEventListener('click', () => moveTaskInList(list, b.dataset.id, -1)));
+  el.querySelectorAll('[data-action="move-down"]').forEach(b => b.addEventListener('click', () => moveTaskInList(list, b.dataset.id, 1)));
+  el.querySelectorAll('[data-action="toggle-expand"]').forEach(b => b.addEventListener('click', () => {
+    const id = b.dataset.id;
+    if(expandedTasks.has(id)) expandedTasks.delete(id); else expandedTasks.add(id);
+    renderTodo();
+  }));
+  el.querySelectorAll('[data-action="toggle-subtask"]').forEach(b => b.addEventListener('click', () => toggleSubtask(b.dataset.task, b.dataset.sub)));
+  el.querySelectorAll('[data-action="del-subtask"]').forEach(b => b.addEventListener('click', () => delSubtask(b.dataset.task, b.dataset.sub)));
+  el.querySelectorAll('[data-action="add-subtask"]').forEach(b => b.addEventListener('click', () => {
+    const input = el.querySelector(`[data-subtask-input="${b.dataset.task}"]`);
+    if(input && input.value.trim()){ addSubtask(b.dataset.task, input.value); }
+  }));
+  el.querySelectorAll('[data-subtask-input]').forEach(inp => inp.addEventListener('keydown', (e) => {
+    if(e.key === 'Enter' && inp.value.trim()) addSubtask(inp.dataset.subtaskInput, inp.value);
   }));
 }
 
@@ -567,6 +962,9 @@ function openAddTaskModal(){
 }
 
 /* ===================== CALENDAR ===================== */
+let calendarSearch = '';
+const DAY_ROW_HEIGHT = 52; // px par heure dans la grille "Jour"
+
 function renderCalendar(){
   const el = document.getElementById('page-calendar');
   const view = state.settings.calendarView;
@@ -575,7 +973,7 @@ function renderCalendar(){
   let headerLabel, bodyHtml;
   if(view === 'Jour'){
     headerLabel = capitalize(selected.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }));
-    bodyHtml = renderDayStrip([selected], selected) + renderDaySummary(selected) + renderTimeline(selected);
+    bodyHtml = renderDaySummary(selected) + renderDayTimeGrid(selected);
   } else if(view === 'Mois'){
     headerLabel = capitalize(selected.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }));
     bodyHtml = renderMonthGrid(selected) + renderDaySummary(selected) + renderTimeline(selected);
@@ -622,16 +1020,23 @@ function renderCalendar(){
   el.querySelector('#btn-prev')?.addEventListener('click', () => navigateCalendar(view, selected, -1));
   el.querySelector('#btn-next')?.addEventListener('click', () => navigateCalendar(view, selected, 1));
   el.querySelector('#btn-new-event')?.addEventListener('click', () => openAddEventModal(dstr(selected)));
-  el.querySelectorAll('[data-action="del-event"]').forEach(b => b.addEventListener('click', () => {
-    const key = b.dataset.date || dstr(selected);
-    state.events[key] = (state.events[key]||[]).filter(e => e.id !== b.dataset.id);
-    saveState(); renderCalendar(); toast('Événement supprimé');
+  el.querySelectorAll('[data-action="del-event"]').forEach(b => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    handleDeleteEventClick(b.dataset.master, b.dataset.date);
   }));
+  el.querySelectorAll('[data-action="view-event"]').forEach(b => b.addEventListener('click', () => openEventDetailModal(b.dataset.master, b.dataset.date)));
   el.querySelectorAll('[data-action="go-to-date"]').forEach(b => b.addEventListener('click', () => {
     state.selectedDate = b.dataset.date;
     state.settings.calendarView = 'Jour';
     saveState(); renderCalendar();
   }));
+  let searchDebounce;
+  el.querySelector('#cal-search')?.addEventListener('input', (e) => {
+    clearTimeout(searchDebounce);
+    const val = e.target.value;
+    searchDebounce = setTimeout(() => { calendarSearch = val; renderCalendar(); setTimeout(() => { const inp = document.getElementById('cal-search'); if(inp){ inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); } }, 0); }, 250);
+  });
+  el.querySelector('#btn-clear-cal-search')?.addEventListener('click', () => { calendarSearch = ''; renderCalendar(); });
 }
 
 function navigateCalendar(view, selected, dir){
@@ -650,7 +1055,7 @@ function renderDayStrip(days, selected){
       <div class="flex items-center justify-between gap-tight-margin overflow-x-auto no-scrollbar py-1">
         ${days.map(d => {
           const isSel = dstr(d) === dstr(selected);
-          const hasEvents = (state.events[dstr(d)]||[]).length > 0;
+          const hasEvents = getEventsForDate(dstr(d)).length > 0;
           return `
           <button data-day="${dstr(d)}" class="day-card ${days.length===1 ? 'w-28' : 'flex-1 min-w-[44px]'} py-2.5 rounded-xl ${isSel ? 'bg-primary-container text-on-primary-container shadow-[0_0_20px_rgba(255,72,152,0.4)] scale-105' : 'bg-surface-container'} flex flex-col items-center justify-center gap-tight-margin transition-all">
             <span class="font-label-sm text-label-sm ${isSel ? 'text-on-primary-container font-bold' : 'text-on-surface-variant font-medium'}">${dayLabels[(d.getDay()+6)%7]}</span>
@@ -676,7 +1081,7 @@ function renderMonthGrid(selected){
           const inMonth = d.getMonth() === month;
           const isSel = dstr(d) === dstr(selected);
           const isToday = dstr(d) === dstr(TODAY);
-          const hasEvents = (state.events[dstr(d)]||[]).length > 0;
+          const hasEvents = getEventsForDate(dstr(d)).length > 0;
           return `
           <button data-day="${dstr(d)}" class="month-cell aspect-square rounded-lg flex flex-col items-center justify-center gap-0.5 ${isSel ? 'bg-primary-container text-on-primary-container' : isToday ? 'bg-surface-container-highest' : 'bg-surface-container/60'} ${!inMonth ? 'opacity-30' : ''} transition-all">
             <span class="font-label-md text-label-md ${isSel ? 'text-on-primary-container font-bold' : 'text-on-surface'}">${d.getDate()}</span>
@@ -688,85 +1093,127 @@ function renderMonthGrid(selected){
 }
 
 function renderDaySummary(selected){
-  const dayEvents = (state.events[dstr(selected)] || []);
-  const totalMinutes = dayEvents.reduce((acc,e) => acc + (toMin(e.end)-toMin(e.start)), 0);
+  const dayEvents = getEventsForDate(dstr(selected));
+  const timed = dayEvents.filter(e => !e.allDay);
+  const totalMinutes = timed.reduce((acc,e) => acc + (toMin(e.end)-toMin(e.start)), 0);
   return `
-    <div class="rounded-2xl bg-surface-container-low p-3.5 flex items-center justify-between mb-5">
+    <div class="rounded-2xl bg-surface-container-low p-3.5 flex items-center justify-between mb-5 mt-5">
       <div class="flex items-center gap-2.5">
         <div class="w-9 h-9 rounded-full bg-surface-container-high flex items-center justify-center text-primary"><span class="material-symbols-outlined text-[18px]">insights</span></div>
         <div>
           <p class="font-headline-md text-headline-md text-on-surface capitalize">${selected.toLocaleDateString('fr-FR',{weekday:'long', day:'numeric', month:'long'})}</p>
-          <p class="font-label-sm text-label-sm text-on-surface-variant">${dayEvents.length} événements · ${(totalMinutes/60).toFixed(1)}h réservées</p>
+          <p class="font-label-sm text-label-sm text-on-surface-variant">${dayEvents.length} événement${dayEvents.length>1?'s':''} · ${(totalMinutes/60).toFixed(1)}h réservées</p>
         </div>
       </div>
       <span class="px-2.5 py-1 rounded-full bg-primary/15 text-primary font-label-sm text-label-sm font-semibold">${dstr(selected)===dstr(TODAY) ? 'ACTIF' : ''}</span>
     </div>`;
 }
 
-function renderTimeline(selected){
-  const dayEvents = (state.events[dstr(selected)] || []).slice().sort((a,b) => a.start.localeCompare(b.start));
+function eventCardHtml(ev){
   return `
-    <div class="flex flex-col gap-4" id="events-timeline">
-      ${dayEvents.length === 0 ? `<div class="rounded-2xl bg-surface-container p-6 text-center"><p class="font-body-md text-body-md text-on-surface-variant">Aucun événement ce jour.</p></div>` : dayEvents.map(ev => `
       <div class="flex gap-stack-gap">
-        <div class="w-11 pt-1 text-right shrink-0"><span class="font-label-sm text-label-sm text-on-surface-variant font-medium">${ev.start}</span></div>
-        <div class="flex-1 relative bg-surface-container rounded-xl p-card-padding overflow-hidden">
+        <div class="w-11 pt-1 text-right shrink-0"><span class="font-label-sm text-label-sm text-on-surface-variant font-medium">${ev.allDay ? '' : ev.start}</span></div>
+        <button data-action="view-event" data-master="${ev.id}" data-date="${ev.occurrenceDate}" class="flex-1 relative bg-surface-container rounded-xl p-card-padding overflow-hidden text-left">
           <div class="absolute left-0 top-0 bottom-0 w-1 ${catColor(ev.category)}"></div>
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-tight-margin mb-1 flex-wrap">
                 <span class="px-2 py-0.5 rounded-full ${catBadge(ev.category)} font-label-sm text-label-sm font-semibold tracking-wide uppercase">${ev.category}</span>
-                <span class="font-label-sm text-label-sm text-on-surface-variant">${ev.start} - ${ev.end}</span>
+                <span class="font-label-sm text-label-sm text-on-surface-variant">${ev.allDay ? 'Toute la journée' : `${ev.start} - ${ev.end}`}</span>
+                ${ev.recurrence ? `<span class="material-symbols-outlined text-on-surface-variant text-[14px]">repeat</span>` : ''}
               </div>
               <h3 class="font-headline-md text-headline-md text-on-surface truncate">${ev.title}</h3>
-              <p class="font-body-md text-body-md text-on-surface-variant truncate mt-0.5">${ev.desc}</p>
+              ${ev.location ? `<p class="font-label-sm text-label-sm text-on-surface-variant truncate mt-0.5 flex items-center gap-1"><span class="material-symbols-outlined text-[12px]">location_on</span>${ev.location}</p>` : ''}
+              ${ev.desc ? `<p class="font-body-md text-body-md text-on-surface-variant truncate mt-0.5">${ev.desc}</p>` : ''}
             </div>
             <div class="flex items-center gap-1 shrink-0">
               <div class="w-7 h-7 rounded-full bg-surface-container-high flex items-center justify-center ${catText(ev.category)}"><span class="material-symbols-outlined text-[16px]">${ev.icon}</span></div>
-              <button data-action="del-event" data-id="${ev.id}" data-date="${dstr(selected)}" class="w-7 h-7 rounded-full flex items-center justify-center text-on-surface-variant"><span class="material-symbols-outlined text-[16px]">close</span></button>
+              <span data-action="del-event" data-master="${ev.id}" data-date="${ev.occurrenceDate}" class="w-7 h-7 rounded-full flex items-center justify-center text-on-surface-variant"><span class="material-symbols-outlined text-[16px]">close</span></span>
             </div>
           </div>
-        </div>
-      </div>`).join('')}
+        </button>
+      </div>`;
+}
+
+function renderTimeline(selected){
+  const dayEvents = getEventsForDate(dstr(selected)).sort((a,b) => (a.allDay?-1:0) - (b.allDay?-1:0) || a.start.localeCompare(b.start));
+  return `
+    <div class="flex flex-col gap-4" id="events-timeline">
+      ${dayEvents.length === 0 ? `<div class="rounded-2xl bg-surface-container p-6 text-center"><p class="font-body-md text-body-md text-on-surface-variant">Aucun événement ce jour.</p></div>` : dayEvents.map(eventCardHtml).join('')}
     </div>`;
 }
 
+// Grille horaire proportionnelle pour la vue "Jour" : les événements sont
+// positionnés et dimensionnés selon leur heure/durée réelle.
+function renderDayTimeGrid(selected){
+  const dateStr = dstr(selected);
+  const dayEvents = getEventsForDate(dateStr);
+  const allDay = dayEvents.filter(e => e.allDay);
+  const timed = dayEvents.filter(e => !e.allDay);
+  const isToday = dateStr === dstr(TODAY);
+  const now = new Date();
+  const nowTop = (now.getHours()*60 + now.getMinutes()) / 60 * DAY_ROW_HEIGHT;
+
+  const allDayHtml = allDay.length ? `
+    <div class="flex flex-wrap gap-1.5 mb-4">
+      ${allDay.map(ev => `
+        <button data-action="view-event" data-master="${ev.id}" data-date="${ev.occurrenceDate}" class="px-2.5 py-1.5 rounded-full ${catBadge(ev.category)} font-label-sm text-label-sm font-semibold flex items-center gap-1.5">
+          ${ev.recurrence ? '<span class="material-symbols-outlined text-[12px]">repeat</span>' : ''}${ev.title}
+        </button>`).join('')}
+    </div>` : '';
+
+  const gridHtml = `
+    <div class="relative rounded-2xl bg-surface-container-low overflow-hidden" style="height:${24*DAY_ROW_HEIGHT}px">
+      ${Array.from({length:24}).map((_,h) => `
+        <div class="absolute left-0 right-0 border-t border-white/[0.06]" style="top:${h*DAY_ROW_HEIGHT}px">
+          <span class="absolute -top-2.5 left-2 font-label-sm text-label-sm text-on-surface-variant/60">${String(h).padStart(2,'0')}h</span>
+        </div>`).join('')}
+      ${isToday ? `
+        <div class="absolute left-0 right-0 z-20 flex items-center" style="top:${nowTop}px">
+          <span class="w-2 h-2 rounded-full bg-primary -ml-1"></span>
+          <span class="flex-1 h-[2px] bg-primary"></span>
+        </div>` : ''}
+      ${timed.map(ev => {
+        const top = toMin(ev.start) / 60 * DAY_ROW_HEIGHT;
+        const height = Math.max(30, (toMin(ev.end) - toMin(ev.start)) / 60 * DAY_ROW_HEIGHT);
+        return `
+        <button data-action="view-event" data-master="${ev.id}" data-date="${ev.occurrenceDate}" class="absolute rounded-lg ${catBadge(ev.category)} border-l-2 ${catColor(ev.category)} px-2 py-1 text-left overflow-hidden z-10" style="top:${top}px; height:${height}px; left:52px; right:10px;">
+          <p class="font-label-sm text-label-sm font-semibold truncate leading-tight">${ev.title}</p>
+          <p class="font-label-sm text-label-sm opacity-80 truncate leading-tight">${ev.start} - ${ev.end}</p>
+        </button>`;
+      }).join('')}
+    </div>`;
+
+  return `<div class="mt-5 mb-6">${allDayHtml}${timed.length === 0 && allDay.length === 0 ? `<div class="rounded-2xl bg-surface-container p-6 text-center mb-4"><p class="font-body-md text-body-md text-on-surface-variant">Aucun événement ce jour.</p></div>` : ''}<div class="overflow-y-auto no-scrollbar" style="max-height:60vh">${gridHtml}</div></div>`;
+}
+
+// Vue "Liste" : chaque événement (série récurrente comprise) apparaît une
+// seule fois, daté par son ancrage, avec la recherche.
 function renderEventsList(){
-  const entries = [];
-  Object.keys(state.events).sort().forEach(dateKey => {
-    (state.events[dateKey]||[]).forEach(ev => entries.push({ dateKey, ev }));
-  });
-  entries.sort((a,b) => a.dateKey === b.dateKey ? a.ev.start.localeCompare(b.ev.start) : a.dateKey.localeCompare(b.dateKey));
-  if(entries.length === 0) return `<div class="mt-5 rounded-2xl bg-surface-container p-6 text-center"><p class="font-body-md text-body-md text-on-surface-variant">Aucun événement planifié.</p></div>`;
+  let entries = (state.events || []).slice().sort((a,b) => a.date === b.date ? a.start.localeCompare(b.start) : a.date.localeCompare(b.date));
+  const q = calendarSearch.trim().toLowerCase();
+  if(q) entries = entries.filter(e => e.title.toLowerCase().includes(q) || (e.location||'').toLowerCase().includes(q) || (e.desc||'').toLowerCase().includes(q));
+
+  const searchBar = `
+    <div class="mt-5 rounded-2xl bg-surface-container p-3 flex items-center gap-2.5">
+      <span class="material-symbols-outlined text-on-surface-variant text-[20px]">search</span>
+      <input id="cal-search" type="text" value="${escapeAttr(calendarSearch)}" placeholder="Rechercher un événement..." class="flex-1 bg-transparent outline-none font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant"/>
+      ${calendarSearch ? `<button id="btn-clear-cal-search" class="w-6 h-6 rounded-full flex items-center justify-center text-on-surface-variant shrink-0"><span class="material-symbols-outlined text-[16px]">close</span></button>` : ''}
+    </div>`;
+
+  if(entries.length === 0){
+    return `${searchBar}<div class="mt-4 rounded-2xl bg-surface-container p-6 text-center"><p class="font-body-md text-body-md text-on-surface-variant">${q ? 'Aucun résultat pour cette recherche.' : 'Aucun événement planifié.'}</p></div>`;
+  }
+
   let lastDate = null;
-  let html = `<div class="mt-5 flex flex-col gap-4" id="events-timeline">`;
-  entries.forEach(({dateKey, ev}) => {
-    if(dateKey !== lastDate){
-      lastDate = dateKey;
-      const d = new Date(dateKey + 'T00:00:00');
-      html += `<button data-action="go-to-date" data-date="${dateKey}" class="text-left font-label-sm text-label-sm text-primary tracking-wider mt-1 first:mt-0 capitalize">${d.toLocaleDateString('fr-FR',{weekday:'long', day:'numeric', month:'long'})}${dateKey===dstr(TODAY)?' · Aujourd\u2019hui':''}</button>`;
+  let html = `${searchBar}<div class="mt-4 flex flex-col gap-4" id="events-timeline">`;
+  entries.forEach(ev => {
+    if(ev.date !== lastDate){
+      lastDate = ev.date;
+      const d = new Date(ev.date + 'T00:00:00');
+      html += `<button data-action="go-to-date" data-date="${ev.date}" class="text-left font-label-sm text-label-sm text-primary tracking-wider mt-1 first:mt-0 capitalize">${d.toLocaleDateString('fr-FR',{weekday:'long', day:'numeric', month:'long'})}${ev.date===dstr(TODAY)?' · Aujourd\u2019hui':''}</button>`;
     }
-    html += `
-      <div class="flex gap-stack-gap">
-        <div class="w-11 pt-1 text-right shrink-0"><span class="font-label-sm text-label-sm text-on-surface-variant font-medium">${ev.start}</span></div>
-        <div class="flex-1 relative bg-surface-container rounded-xl p-card-padding overflow-hidden">
-          <div class="absolute left-0 top-0 bottom-0 w-1 ${catColor(ev.category)}"></div>
-          <div class="flex items-start justify-between gap-2">
-            <div class="min-w-0 flex-1">
-              <div class="flex items-center gap-tight-margin mb-1 flex-wrap">
-                <span class="px-2 py-0.5 rounded-full ${catBadge(ev.category)} font-label-sm text-label-sm font-semibold tracking-wide uppercase">${ev.category}</span>
-                <span class="font-label-sm text-label-sm text-on-surface-variant">${ev.start} - ${ev.end}</span>
-              </div>
-              <h3 class="font-headline-md text-headline-md text-on-surface truncate">${ev.title}</h3>
-              <p class="font-body-md text-body-md text-on-surface-variant truncate mt-0.5">${ev.desc}</p>
-            </div>
-            <div class="flex items-center gap-1 shrink-0">
-              <div class="w-7 h-7 rounded-full bg-surface-container-high flex items-center justify-center ${catText(ev.category)}"><span class="material-symbols-outlined text-[16px]">${ev.icon}</span></div>
-              <button data-action="del-event" data-id="${ev.id}" data-date="${dateKey}" class="w-7 h-7 rounded-full flex items-center justify-center text-on-surface-variant"><span class="material-symbols-outlined text-[16px]">close</span></button>
-            </div>
-          </div>
-        </div>
-      </div>`;
+    html += eventCardHtml({ ...ev, occurrenceDate: ev.date });
   });
   html += `</div>`;
   return html;
@@ -777,43 +1224,156 @@ function catColor(c){ return { 'Travail':'bg-primary', 'Personnel':'bg-tertiary'
 function catBadge(c){ return { 'Travail':'bg-primary-container/20 text-primary', 'Personnel':'bg-tertiary-container/30 text-tertiary', 'Focus':'bg-primary-container/20 text-primary', 'Santé':'bg-secondary-container text-on-secondary-container' }[c] || 'bg-surface-container-high text-on-surface-variant'; }
 function catText(c){ return { 'Travail':'text-primary', 'Personnel':'text-tertiary', 'Focus':'text-primary', 'Santé':'text-secondary' }[c] || 'text-on-surface-variant'; }
 
-function openAddEventModal(dateKey){
+// dateKey : date d'ancrage utilisée pour un NOUVEL événement.
+// editMasterId : si fourni, on modifie l'événement (et donc toute sa série si récurrent) au lieu d'en créer un.
+function openAddEventModal(dateKey, editMasterId){
+  const existing = editMasterId ? state.events.find(e => e.id === editMasterId) : null;
+  const icons = { 'Travail':'groups', 'Personnel':'restaurant', 'Focus':'bolt', 'Santé':'fitness_center' };
+  const freq = existing?.recurrence?.freq || 'none';
+
   openModal(`
     <div class="flex items-center justify-between mb-4">
-      <h3 class="font-headline-lg text-headline-lg text-on-surface">Nouvel événement</h3>
+      <h3 class="font-headline-lg text-headline-lg text-on-surface">${existing ? "Modifier l'événement" : 'Nouvel événement'}</h3>
       <button data-action="close" class="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant"><span class="material-symbols-outlined text-[18px]">close</span></button>
     </div>
+    ${existing?.recurrence ? `<p class="font-label-sm text-label-sm text-primary mb-3 flex items-center gap-1.5"><span class="material-symbols-outlined text-[14px]">repeat</span>Modifie toute la série récurrente</p>` : ''}
     <div class="flex flex-col gap-3">
-      <input id="ev-title" type="text" placeholder="Titre de l'événement" class="w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant focus:border-primary"/>
-      <input id="ev-desc" type="text" placeholder="Description (optionnel)" class="w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant focus:border-primary"/>
-      <div class="flex gap-3">
-        <input id="ev-start" type="time" value="09:00" class="flex-1 bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface focus:border-primary"/>
-        <input id="ev-end" type="time" value="10:00" class="flex-1 bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface focus:border-primary"/>
+      <input id="ev-title" type="text" value="${escapeAttr(existing?.title)}" placeholder="Titre de l'événement" class="w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant focus:border-primary"/>
+      <input id="ev-desc" type="text" value="${escapeAttr(existing?.desc)}" placeholder="Description (optionnel)" class="w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant focus:border-primary"/>
+      <input id="ev-location" type="text" value="${escapeAttr(existing?.location)}" placeholder="Lieu (optionnel)" class="w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant focus:border-primary"/>
+
+      <label class="flex items-center gap-2.5 py-1">
+        <input id="ev-allday" type="checkbox" ${existing?.allDay ? 'checked' : ''} class="w-5 h-5 rounded border-2 border-outline-variant accent-[#ffb0c9]"/>
+        <span class="font-body-md text-body-md text-on-surface">Toute la journée</span>
+      </label>
+      <div id="ev-time-row" class="flex gap-3 ${existing?.allDay ? 'hidden' : ''}">
+        <input id="ev-start" type="time" value="${existing?.start || '09:00'}" class="flex-1 bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface focus:border-primary"/>
+        <input id="ev-end" type="time" value="${existing?.end || '10:00'}" class="flex-1 bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface focus:border-primary"/>
       </div>
+
       <select id="ev-category" class="w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface focus:border-primary">
-        <option value="Travail">Travail</option>
-        <option value="Personnel">Personnel</option>
-        <option value="Focus">Focus</option>
-        <option value="Santé">Santé</option>
+        ${['Travail','Personnel','Focus','Santé'].map(c => `<option value="${c}" ${existing?.category===c?'selected':''}>${c}</option>`).join('')}
       </select>
-      <button id="btn-save-event" class="mt-2 w-full py-3.5 rounded-xl bg-primary text-on-primary font-headline-md text-headline-md font-semibold active:scale-[0.98] transition-all">Ajouter à l'agenda</button>
+
+      <div>
+        <label class="font-label-sm text-label-sm text-on-surface-variant block mb-1.5">Récurrence</label>
+        <select id="ev-recurrence" class="w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface focus:border-primary">
+          <option value="none" ${freq==='none'?'selected':''}>Aucune</option>
+          <option value="daily" ${freq==='daily'?'selected':''}>Tous les jours</option>
+          <option value="weekly" ${freq==='weekly'?'selected':''}>Toutes les semaines</option>
+          <option value="monthly" ${freq==='monthly'?'selected':''}>Tous les mois</option>
+          <option value="yearly" ${freq==='yearly'?'selected':''}>Tous les ans</option>
+        </select>
+      </div>
+      <div id="ev-until-row" class="${freq==='none' ? 'hidden' : ''}">
+        <label class="font-label-sm text-label-sm text-on-surface-variant block mb-1.5">Jusqu'au (optionnel)</label>
+        <input id="ev-until" type="date" value="${existing?.recurrence?.until || ''}" class="w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface focus:border-primary"/>
+      </div>
+
+      <button id="btn-save-event" class="mt-2 w-full py-3.5 rounded-xl bg-primary text-on-primary font-headline-md text-headline-md font-semibold active:scale-[0.98] transition-all">${existing ? 'Enregistrer' : "Ajouter à l'agenda"}</button>
     </div>
   `);
   document.querySelector('[data-action="close"]').addEventListener('click', closeModal);
+  document.getElementById('ev-allday').addEventListener('change', (e) => {
+    document.getElementById('ev-time-row').classList.toggle('hidden', e.target.checked);
+  });
+  document.getElementById('ev-recurrence').addEventListener('change', (e) => {
+    document.getElementById('ev-until-row').classList.toggle('hidden', e.target.value === 'none');
+  });
   document.getElementById('btn-save-event').addEventListener('click', () => {
     const title = document.getElementById('ev-title').value.trim();
     if(!title){ toast('Ajoute un titre'); return; }
+    const allDay = document.getElementById('ev-allday').checked;
     const cat = document.getElementById('ev-category').value;
-    const icons = { 'Travail':'groups', 'Personnel':'restaurant', 'Focus':'bolt', 'Santé':'fitness_center' };
-    const ev = { id: uid(), start: document.getElementById('ev-start').value, end: document.getElementById('ev-end').value, title, desc: document.getElementById('ev-desc').value.trim() || 'Aucune description', category: cat, icon: icons[cat] };
-    if(!state.events[dateKey]) state.events[dateKey] = [];
-    state.events[dateKey].push(ev);
-    saveState(); closeModal(); renderCalendar(); toast('Événement ajouté');
+    const recFreq = document.getElementById('ev-recurrence').value;
+    const recurrence = recFreq === 'none' ? null : { freq: recFreq, interval: 1, until: document.getElementById('ev-until').value || null };
+    const payload = {
+      title,
+      desc: document.getElementById('ev-desc').value.trim(),
+      location: document.getElementById('ev-location').value.trim(),
+      allDay,
+      start: allDay ? '00:00' : document.getElementById('ev-start').value,
+      end: allDay ? '23:59' : document.getElementById('ev-end').value,
+      category: cat,
+      icon: icons[cat],
+      recurrence
+    };
+    if(existing){
+      Object.assign(existing, payload);
+    } else {
+      state.events.push({ id: uid(), date: dateKey, exceptions: [], ...payload });
+    }
+    saveState(); closeModal(); renderCalendar(); toast(existing ? 'Événement mis à jour' : 'Événement ajouté');
   });
 }
 
 /* ===================== GOALS ===================== */
 let goalsFilter = 'Tous';
+let expandedGoals = new Set();
+
+function goalStatusLabel(progress){
+  if(progress >= 100) return 'Atteint';
+  if(progress === 0) return 'À démarrer';
+  if(progress < 50) return 'En cours';
+  return 'Bien avancé';
+}
+function goalStatusBadge(progress){
+  if(progress >= 100) return 'bg-primary text-on-primary';
+  if(progress === 0) return 'bg-surface-container-high text-on-surface-variant';
+  return 'bg-tertiary-container/25 text-tertiary';
+}
+function formatGoalDeadline(d){
+  if(!d) return '';
+  try{ const dt = new Date(d + 'T00:00:00'); return capitalize(dt.toLocaleDateString('fr-FR', { month: 'short', year: 'numeric' })); }
+  catch(e){ return d; }
+}
+function recomputeGoalProgress(g){
+  if(g.milestones && g.milestones.length){
+    g.progress = Math.round(g.milestones.filter(m => m.done).length / g.milestones.length * 100);
+  }
+}
+function addGoalMilestone(goalId, text){
+  const g = state.goals.find(x => x.id === goalId);
+  if(!g || !text.trim()) return;
+  if(!g.milestones) g.milestones = [];
+  g.milestones.push({ id: uid(), text: text.trim(), done: false });
+  recomputeGoalProgress(g);
+  saveState(); renderGoals();
+}
+function toggleGoalMilestone(goalId, msId){
+  const g = state.goals.find(x => x.id === goalId);
+  const m = g && (g.milestones || []).find(m => m.id === msId);
+  if(!m) return;
+  m.done = !m.done;
+  recomputeGoalProgress(g);
+  saveState(); renderGoals();
+}
+function delGoalMilestone(goalId, msId){
+  const g = state.goals.find(x => x.id === goalId);
+  if(!g) return;
+  g.milestones = (g.milestones || []).filter(m => m.id !== msId);
+  recomputeGoalProgress(g);
+  saveState(); renderGoals();
+}
+function milestonePanelHtml(g){
+  const ms = g.milestones || [];
+  return `
+    <div class="px-1 pb-1 pt-2">
+      ${ms.map(m => `
+      <div class="flex items-center gap-2 py-1.5">
+        <button data-action="toggle-milestone" data-goal="${g.id}" data-ms="${m.id}" class="w-5 h-5 rounded-full border-2 ${m.done ? 'bg-primary border-primary' : 'border-outline-variant'} flex items-center justify-center shrink-0 transition-colors">
+          ${m.done ? '<span class="material-symbols-outlined text-on-primary text-[12px]">check</span>' : ''}
+        </button>
+        <span class="font-label-md text-label-md flex-1 ${m.done ? 'line-through text-on-surface-variant' : 'text-on-surface'}">${m.text}</span>
+        <button data-action="del-milestone" data-goal="${g.id}" data-ms="${m.id}" class="w-6 h-6 rounded-full flex items-center justify-center text-on-surface-variant shrink-0"><span class="material-symbols-outlined text-[14px]">close</span></button>
+      </div>`).join('')}
+      <div class="flex items-center gap-2 mt-1">
+        <input type="text" data-milestone-input="${g.id}" placeholder="Ajouter une étape..." class="flex-1 bg-surface-container-highest/50 rounded-lg px-2.5 py-1.5 outline-none font-label-md text-label-md text-on-surface placeholder:text-on-surface-variant"/>
+        <button data-action="add-milestone" data-goal="${g.id}" class="w-7 h-7 rounded-lg bg-surface-container-high flex items-center justify-center text-on-surface-variant shrink-0"><span class="material-symbols-outlined text-[16px]">add</span></button>
+      </div>
+    </div>`;
+}
+
 function renderGoals(){
   const el = document.getElementById('page-goals');
   const cats = ['Tous', ...Array.from(new Set(state.goals.map(g => g.category)))];
@@ -827,6 +1387,7 @@ function renderGoals(){
   const career = byCat('Carrière'); const health = byCat('Santé'); const finance = byCat('Finances');
   const active = state.goals.filter(g => g.progress < 100).length;
   const reached = state.goals.filter(g => g.progress >= 100).length;
+  const todayStr = dstr(TODAY);
 
   el.innerHTML = `
     <div class="pt-2 flex items-center justify-between">
@@ -840,7 +1401,7 @@ function renderGoals(){
 
     <div class="flex gap-2.5 mb-5">
       <button id="btn-new-goal" class="flex-1 py-2.5 rounded-xl bg-primary text-on-primary font-body-md text-body-md font-semibold flex items-center justify-center gap-1.5 active:scale-95 transition-transform"><span class="material-symbols-outlined text-[18px]">add</span>Nouvel objectif</button>
-      <button id="btn-ai-eval" class="flex-1 py-2.5 rounded-xl bg-surface-container-high text-on-surface font-body-md text-body-md flex items-center justify-center gap-1.5 active:scale-95 transition-transform"><span class="material-symbols-outlined text-[18px]">auto_awesome</span>Évaluation IA</button>
+      <button id="btn-goals-overview" class="flex-1 py-2.5 rounded-xl bg-surface-container-high text-on-surface font-body-md text-body-md flex items-center justify-center gap-1.5 active:scale-95 transition-transform"><span class="material-symbols-outlined text-[18px]">summarize</span>Aperçu</button>
     </div>
 
     <div class="rounded-[20px] bg-surface-container p-card-padding border border-white/[0.06]">
@@ -866,12 +1427,16 @@ function renderGoals(){
     </div>
 
     <div class="flex flex-col gap-3 mt-4">
-      ${filtered.length===0 ? `<div class="rounded-2xl bg-surface-container p-6 text-center"><p class="font-body-md text-body-md text-on-surface-variant">Aucun objectif dans cette catégorie.</p></div>` : filtered.map(g => `
-      <div class="rounded-2xl bg-surface-container p-card-padding">
+      ${filtered.length===0 ? `<div class="rounded-2xl bg-surface-container p-6 text-center"><p class="font-body-md text-body-md text-on-surface-variant">Aucun objectif dans cette catégorie.</p></div>` : filtered.map(g => {
+        const ms = g.milestones || [];
+        const overdue = g.deadline && g.deadline < todayStr && g.progress < 100;
+        const expanded = expandedGoals.has(g.id);
+        return `
+      <div class="rounded-2xl bg-surface-container p-card-padding ${g.progress>=100 ? 'border border-primary/25' : ''}">
         <div class="flex items-center justify-between mb-2 flex-wrap gap-1.5">
           <span class="px-2 py-0.5 rounded-full ${catBadge(g.category.startsWith('Carrière')?'Travail':g.category.startsWith('Santé')?'Santé':g.category.startsWith('Finances')?'Focus':'Personnel')} font-label-sm text-label-sm font-semibold">${g.category}</span>
-          <span class="font-label-sm text-label-sm text-on-surface-variant flex items-center gap-1"><span class="material-symbols-outlined text-[14px]">event</span>${g.deadline}</span>
-          <span class="font-label-sm text-label-sm text-on-surface-variant ml-auto">${g.status}</span>
+          ${g.deadline ? `<span class="font-label-sm text-label-sm ${overdue ? 'text-error' : 'text-on-surface-variant'} flex items-center gap-1"><span class="material-symbols-outlined text-[14px]">event</span>${overdue ? 'En retard' : formatGoalDeadline(g.deadline)}</span>` : ''}
+          <span class="px-2 py-0.5 rounded-full ${goalStatusBadge(g.progress)} font-label-sm text-label-sm font-semibold ml-auto">${goalStatusLabel(g.progress)}</span>
         </div>
         <h3 class="font-headline-md text-headline-md text-on-surface">${g.title}</h3>
         <div class="flex items-center justify-between mt-2 mb-1.5">
@@ -881,12 +1446,27 @@ function renderGoals(){
         <div class="h-1.5 w-full rounded-full bg-surface-container-highest overflow-hidden">
           <div class="h-full rounded-full bg-gradient-to-r from-primary to-secondary" style="width:${g.progress}%"></div>
         </div>
+
+        <button data-action="toggle-goal-expand" data-id="${g.id}" class="mt-2.5 flex items-center gap-1 text-on-surface-variant font-label-sm text-label-sm">
+          ${ms.length ? `<span class="font-semibold text-on-surface">${ms.filter(m=>m.done).length}/${ms.length}</span> étapes` : 'Ajouter des étapes'}
+          <span class="material-symbols-outlined text-[16px]">${expanded ? 'expand_less' : 'expand_more'}</span>
+        </button>
+        ${expanded ? milestonePanelHtml(g) : ''}
+
+        <div class="mt-3">
+          ${g.id === state.activeGoalId
+            ? `<span class="px-2.5 py-1 rounded-full bg-primary-container/20 text-primary font-label-sm text-label-sm font-semibold inline-flex items-center gap-1"><span class="material-symbols-outlined text-[14px]">check_circle</span>Objectif actif</span>`
+            : `<button data-action="set-active-goal" data-id="${g.id}" class="px-2.5 py-1 rounded-full bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm">Définir comme objectif actif</button>`}
+        </div>
         <div class="flex items-center gap-2 mt-3">
+          ${ms.length === 0 ? `
           <button data-action="dec" data-id="${g.id}" class="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant active:scale-90 transition-transform"><span class="material-symbols-outlined text-[16px]">remove</span></button>
           <button data-action="inc" data-id="${g.id}" class="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant active:scale-90 transition-transform"><span class="material-symbols-outlined text-[16px]">add</span></button>
+          ` : ''}
+          <button data-action="edit-goal" data-id="${g.id}" class="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant active:scale-90 transition-transform"><span class="material-symbols-outlined text-[16px]">edit</span></button>
           <button data-action="del-goal" data-id="${g.id}" class="ml-auto w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant"><span class="material-symbols-outlined text-[16px]">delete</span></button>
         </div>
-      </div>`).join('')}
+      </div>`;}).join('')}
     </div>
 
     ${state.goals.length > 0 ? `
@@ -904,19 +1484,40 @@ function renderGoals(){
   `;
 
   el.querySelectorAll('.cat-pill').forEach(b => b.addEventListener('click', () => { goalsFilter = b.dataset.cat; renderGoals(); }));
-  el.querySelector('#btn-new-goal').addEventListener('click', openAddGoalModal);
-  el.querySelector('#btn-add-ambition').addEventListener('click', openAddGoalModal);
-  el.querySelector('#btn-ai-eval').addEventListener('click', () => toast(`Progression moyenne: ${globalProgress}% · continue comme ça !`));
+  el.querySelector('#btn-new-goal').addEventListener('click', () => openGoalModal());
+  el.querySelector('#btn-add-ambition').addEventListener('click', () => openGoalModal());
+  el.querySelector('#btn-goals-overview').addEventListener('click', () => openGoalsOverviewModal());
   el.querySelectorAll('[data-action="inc"]').forEach(b => b.addEventListener('click', () => adjustGoal(b.dataset.id, 5)));
   el.querySelectorAll('[data-action="dec"]').forEach(b => b.addEventListener('click', () => adjustGoal(b.dataset.id, -5)));
+  el.querySelectorAll('[data-action="edit-goal"]').forEach(b => b.addEventListener('click', () => openGoalModal(b.dataset.id)));
+  el.querySelectorAll('[data-action="toggle-goal-expand"]').forEach(b => b.addEventListener('click', () => {
+    const id = b.dataset.id;
+    if(expandedGoals.has(id)) expandedGoals.delete(id); else expandedGoals.add(id);
+    renderGoals();
+  }));
+  el.querySelectorAll('[data-action="toggle-milestone"]').forEach(b => b.addEventListener('click', () => toggleGoalMilestone(b.dataset.goal, b.dataset.ms)));
+  el.querySelectorAll('[data-action="del-milestone"]').forEach(b => b.addEventListener('click', () => delGoalMilestone(b.dataset.goal, b.dataset.ms)));
+  el.querySelectorAll('[data-action="add-milestone"]').forEach(b => b.addEventListener('click', () => {
+    const input = el.querySelector(`[data-milestone-input="${b.dataset.goal}"]`);
+    if(input && input.value.trim()) addGoalMilestone(b.dataset.goal, input.value);
+  }));
+  el.querySelectorAll('[data-milestone-input]').forEach(inp => inp.addEventListener('keydown', (e) => {
+    if(e.key === 'Enter' && inp.value.trim()) addGoalMilestone(inp.dataset.milestoneInput, inp.value);
+  }));
+  el.querySelectorAll('[data-action="set-active-goal"]').forEach(b => b.addEventListener('click', () => {
+    state.activeGoalId = b.dataset.id;
+    saveState(); renderGoals(); toast('Objectif actif mis à jour');
+  }));
   el.querySelectorAll('[data-action="del-goal"]').forEach(b => b.addEventListener('click', () => {
     state.goals = state.goals.filter(g => g.id !== b.dataset.id);
+    if(state.activeGoalId === b.dataset.id) state.activeGoalId = null;
+    expandedGoals.delete(b.dataset.id);
     saveState(); renderGoals(); toast('Objectif supprimé');
   }));
 }
 function adjustGoal(id, delta){
   const g = state.goals.find(g => g.id === id);
-  if(!g) return;
+  if(!g || (g.milestones && g.milestones.length)) return;
   g.progress = Math.max(0, Math.min(100, g.progress + delta));
   saveState(); renderGoals();
 }
@@ -927,28 +1528,62 @@ function goalsTip(goals){
   if(best.id === worst.id) return `Tous tes objectifs avancent au même rythme (${best.progress}%). Belle régularité.`;
   return `"${best.title}" avance bien (${best.progress}%). "${worst.title}" pourrait profiter d'un peu plus d'attention (${worst.progress}%).`;
 }
-function openAddGoalModal(){
+// Aperçu basé sur les vraies données (pas d'IA réelle dans ce prototype
+// front-end sans backend) : un résumé honnête plutôt qu'un label trompeur.
+function openGoalsOverviewModal(){
+  const todayStr = dstr(TODAY);
+  const lines = state.goals.map(g => {
+    const overdue = g.deadline && g.deadline < todayStr && g.progress < 100;
+    let note;
+    if(g.progress >= 100) note = 'Atteint 🎉';
+    else if(overdue) note = 'Échéance dépassée — à revoir';
+    else if(g.progress === 0) note = "Pas encore démarré";
+    else note = `${g.progress}% — ${goalStatusLabel(g.progress).toLowerCase()}`;
+    return `<div class="flex items-center justify-between py-2 border-b border-white/[0.06] last:border-0"><span class="font-body-md text-body-md text-on-surface truncate pr-2">${g.title}</span><span class="font-label-sm text-label-sm text-on-surface-variant shrink-0">${note}</span></div>`;
+  }).join('');
+  openModal(`
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="font-headline-lg text-headline-lg text-on-surface">Aperçu des objectifs</h3>
+      <button data-action="close" class="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant"><span class="material-symbols-outlined text-[18px]">close</span></button>
+    </div>
+    ${state.goals.length ? `<div class="flex flex-col">${lines}</div>` : `<p class="font-body-md text-body-md text-on-surface-variant">Aucun objectif pour l'instant.</p>`}
+  `);
+  document.querySelector('[data-action="close"]').addEventListener('click', closeModal);
+}
+// editId fourni -> modifie l'objectif existant, sinon en crée un nouveau.
+function openGoalModal(editId){
+  const existing = editId ? state.goals.find(g => g.id === editId) : null;
   openModal(`
     <div class="flex items-center justify-between mb-4">
-      <h3 class="font-headline-lg text-headline-lg text-on-surface">Nouvel objectif</h3>
+      <h3 class="font-headline-lg text-headline-lg text-on-surface">${existing ? "Modifier l'objectif" : 'Nouvel objectif'}</h3>
       <button data-action="close" class="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant"><span class="material-symbols-outlined text-[18px]">close</span></button>
     </div>
     <div class="flex flex-col gap-3">
-      <input id="g-title" type="text" placeholder="Titre de l'objectif" class="w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant focus:border-primary"/>
-      <input id="g-metric" type="text" placeholder="Indicateur (ex: 20 000 CHF épargnés)" class="w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant focus:border-primary"/>
+      <input id="g-title" type="text" value="${escapeAttr(existing?.title)}" placeholder="Titre de l'objectif" class="w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant focus:border-primary"/>
+      <input id="g-metric" type="text" value="${escapeAttr(existing?.metric)}" placeholder="Indicateur (ex: 20 000 CHF épargnés)" class="w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant focus:border-primary"/>
       <div class="flex gap-3">
-        <input id="g-category" type="text" placeholder="Catégorie" class="flex-1 bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant focus:border-primary"/>
-        <input id="g-deadline" type="text" placeholder="Échéance" class="flex-1 bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant focus:border-primary"/>
+        <input id="g-category" type="text" value="${escapeAttr(existing?.category)}" placeholder="Catégorie" class="flex-1 bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant focus:border-primary"/>
+        <input id="g-deadline" type="date" value="${existing?.deadline || ''}" class="flex-1 bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface focus:border-primary"/>
       </div>
-      <button id="btn-save-goal" class="mt-2 w-full py-3.5 rounded-xl bg-primary text-on-primary font-headline-md text-headline-md font-semibold active:scale-[0.98] transition-all">Créer l'objectif</button>
+      <button id="btn-save-goal" class="mt-2 w-full py-3.5 rounded-xl bg-primary text-on-primary font-headline-md text-headline-md font-semibold active:scale-[0.98] transition-all">${existing ? 'Enregistrer' : "Créer l'objectif"}</button>
     </div>
   `);
   document.querySelector('[data-action="close"]').addEventListener('click', closeModal);
   document.getElementById('btn-save-goal').addEventListener('click', () => {
     const title = document.getElementById('g-title').value.trim();
     if(!title){ toast('Ajoute un titre'); return; }
-    state.goals.push({ id: uid(), category: document.getElementById('g-category').value.trim() || 'Perso', title, deadline: document.getElementById('g-deadline').value.trim() || 'À définir', status: 'Nouveau', metric: document.getElementById('g-metric').value.trim() || 'Progression', progress: 0 });
-    saveState(); closeModal(); renderGoals(); toast('Objectif créé');
+    const payload = {
+      title,
+      category: document.getElementById('g-category').value.trim() || 'Perso',
+      deadline: document.getElementById('g-deadline').value || '',
+      metric: document.getElementById('g-metric').value.trim() || 'Progression'
+    };
+    if(existing){
+      Object.assign(existing, payload);
+    } else {
+      state.goals.push({ id: uid(), progress: 0, milestones: [], ...payload });
+    }
+    saveState(); closeModal(); renderGoals(); toast(existing ? 'Objectif mis à jour' : 'Objectif créé');
   });
 }
 
@@ -1019,19 +1654,24 @@ function renderSettings(){
       </div>
     </div>
 
-    <span class="font-label-sm text-label-sm text-primary tracking-wider mt-6 mb-2 flex items-center gap-1.5"><span class="material-symbols-outlined text-[15px]">sync</span>DONNÉES & SYNCHRONISATION</span>
+    <span class="font-label-sm text-label-sm text-primary tracking-wider mt-6 mb-2 flex items-center gap-1.5"><span class="material-symbols-outlined text-[15px]">sync</span>DONNÉES</span>
     <div class="rounded-2xl bg-surface-container divide-y divide-white/[0.06]">
       <div class="p-card-padding flex items-center justify-between gap-3">
         <div class="flex items-center gap-3 min-w-0">
-          <div class="w-9 h-9 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant shrink-0"><span class="material-symbols-outlined text-[18px]">cloud_done</span></div>
-          <div class="min-w-0"><p class="font-body-md text-body-md text-on-surface">Sauvegarde Cloud & Local</p><p class="font-label-sm text-label-sm text-on-surface-variant">Chiffrement AES-256 actif</p></div>
+          <div class="w-9 h-9 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant shrink-0"><span class="material-symbols-outlined text-[18px]">smartphone</span></div>
+          <div class="min-w-0"><p class="font-body-md text-body-md text-on-surface">Stockage local</p><p class="font-label-sm text-label-sm text-on-surface-variant">Enregistré uniquement dans ce navigateur</p></div>
         </div>
         <span class="px-2 py-1 rounded-full bg-surface-container-high font-label-sm text-label-sm text-on-surface-variant flex items-center gap-1 shrink-0"><span class="w-1.5 h-1.5 rounded-full bg-primary inline-block"></span>${nowTime()}</span>
       </div>
       <button id="btn-export" class="w-full p-card-padding flex items-center justify-between gap-3 text-left">
-        <div class="flex items-center gap-3 min-w-0"><span class="material-symbols-outlined text-on-surface-variant text-[18px]">download</span><span class="font-body-md text-body-md text-on-surface">Exporter toutes mes données (.json)</span></div>
+        <div class="flex items-center gap-3 min-w-0"><span class="material-symbols-outlined text-on-surface-variant text-[18px]">download</span><span class="font-body-md text-body-md text-on-surface">Exporter mes données (.json)</span></div>
         <span class="material-symbols-outlined text-on-surface-variant text-[18px]">chevron_right</span>
       </button>
+      <button id="btn-import" class="w-full p-card-padding flex items-center justify-between gap-3 text-left">
+        <div class="flex items-center gap-3 min-w-0"><span class="material-symbols-outlined text-on-surface-variant text-[18px]">upload</span><span class="font-body-md text-body-md text-on-surface">Importer une sauvegarde (.json)</span></div>
+        <span class="material-symbols-outlined text-on-surface-variant text-[18px]">chevron_right</span>
+      </button>
+      <input id="import-file-input" type="file" accept="application/json" class="hidden"/>
     </div>
 
     <span class="font-label-sm text-label-sm text-primary tracking-wider mt-6 mb-2 flex items-center gap-1.5"><span class="material-symbols-outlined text-[15px]">shield</span>COMPTE & SÉCURITÉ</span>
@@ -1040,8 +1680,8 @@ function renderSettings(){
         <div class="flex items-center gap-3"><span class="material-symbols-outlined text-on-surface-variant text-[18px]">badge</span><span class="font-body-md text-body-md text-on-surface">Modifier le profil</span></div>
         <span class="material-symbols-outlined text-on-surface-variant text-[18px]">chevron_right</span>
       </button>
-      <button class="w-full p-card-padding flex items-center justify-between gap-3 text-left" onclick="toast('Confidentialité & stockage privé')">
-        <div class="flex items-center gap-3"><span class="material-symbols-outlined text-on-surface-variant text-[18px]">lock</span><span class="font-body-md text-body-md text-on-surface">Confidentialité & stockage privé</span></div>
+      <button id="btn-privacy" class="w-full p-card-padding flex items-center justify-between gap-3 text-left">
+        <div class="flex items-center gap-3"><span class="material-symbols-outlined text-on-surface-variant text-[18px]">lock</span><span class="font-body-md text-body-md text-on-surface">Confidentialité & stockage</span></div>
         <span class="material-symbols-outlined text-on-surface-variant text-[18px]">chevron_right</span>
       </button>
       <button id="btn-logout" class="w-full p-card-padding flex items-center gap-3 text-left">
@@ -1071,6 +1711,62 @@ function renderSettings(){
       document.body.appendChild(a); a.click(); a.remove();
       toast('Export généré');
     }catch(e){ toast('Export indisponible dans cet aperçu'); }
+  });
+  el.querySelector('#btn-import').addEventListener('click', () => document.getElementById('import-file-input').click());
+  el.querySelector('#import-file-input').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      let parsed;
+      try{ parsed = JSON.parse(reader.result); }
+      catch(err){ toast('Fichier invalide : ce n\u2019est pas un JSON lisible'); return; }
+      if(!parsed || typeof parsed !== 'object' || !parsed.tasks || !parsed.goals || !parsed.settings || !parsed.user){
+        toast('Ce fichier ne ressemble pas à une sauvegarde LISTMAX');
+        return;
+      }
+      openModal(`
+        <div class="text-center py-2">
+          <div class="w-14 h-14 rounded-full bg-tertiary-container/20 text-tertiary flex items-center justify-center mx-auto mb-3"><span class="material-symbols-outlined text-[26px]">upload</span></div>
+          <h3 class="font-headline-md text-headline-md text-on-surface">Importer cette sauvegarde ?</h3>
+          <p class="font-body-md text-body-md text-on-surface-variant mt-1.5">Toutes tes données actuelles (tâches, agenda, objectifs) seront remplacées par le contenu de ce fichier. Cette action est irréversible.</p>
+          <div class="flex gap-2.5 mt-5">
+            <button data-action="close" class="flex-1 py-3 rounded-xl bg-surface-container-high text-on-surface font-body-md text-body-md">Annuler</button>
+            <button id="btn-confirm-import" class="flex-1 py-3 rounded-xl bg-primary text-on-primary font-body-md text-body-md font-semibold">Importer</button>
+          </div>
+        </div>
+      `);
+      document.querySelector('[data-action="close"]').addEventListener('click', closeModal);
+      document.getElementById('btn-confirm-import').addEventListener('click', () => {
+        const keepUser = state.user;
+        state = parsed;
+        state.user = keepUser; // le compte connecté reste celui-ci, seules les données (tâches/agenda/objectifs) changent
+        migrateEventsIfNeeded();
+        if(state.activeGoalId === undefined) state.activeGoalId = null;
+        if(!Array.isArray(state.tasks)) state.tasks = [];
+        if(!Array.isArray(state.goals)) state.goals = [];
+        syncLongTermDueTasks();
+        saveState();
+        closeModal(); renderSettings(); toast('Sauvegarde importée');
+      });
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  });
+  el.querySelector('#btn-privacy').addEventListener('click', () => {
+    openModal(`
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="font-headline-lg text-headline-lg text-on-surface">Confidentialité & stockage</h3>
+        <button data-action="close" class="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant"><span class="material-symbols-outlined text-[18px]">close</span></button>
+      </div>
+      <div class="flex flex-col gap-3 font-body-md text-body-md text-on-surface-variant">
+        <p><strong class="text-on-surface">Où vivent tes données ?</strong> Uniquement dans le stockage local de ce navigateur, sur cet appareil. LISTMAX n'a pas de serveur : rien n'est envoyé ni stocké ailleurs.</p>
+        <p><strong class="text-on-surface">Et si je change d'appareil ou de navigateur ?</strong> Tes données ne te suivront pas automatiquement. Utilise "Exporter mes données" puis "Importer une sauvegarde" sur l'autre appareil pour les transférer.</p>
+        <p><strong class="text-on-surface">Et si je vide le cache / l'historique du navigateur ?</strong> Tes données peuvent être supprimées définitivement. Pense à exporter régulièrement une sauvegarde si elles comptent pour toi.</p>
+        <p><strong class="text-on-surface">Mon mot de passe est-il sécurisé ?</strong> C'est un prototype : le mot de passe est vérifié localement avec un hash simple, pas un algorithme cryptographique robuste. Évite d'y mettre un mot de passe que tu utilises ailleurs.</p>
+      </div>
+    `);
+    document.querySelector('[data-action="close"]').addEventListener('click', closeModal);
   });
   el.querySelector('#btn-change-name').addEventListener('click', openEditProfileModal);
   el.querySelector('#btn-logout').addEventListener('click', () => {
@@ -1120,25 +1816,80 @@ function renderSettings(){
   });
 }
 function nowTime(){ const d = new Date(); return `À ${pad(d.getHours())}:${pad(d.getMinutes())}`; }
-function openEditProfileModal(){
+async function openEditProfileModal(){
+  const accounts = await loadAccounts();
+  const account = accounts.find(a => a.email === currentEmail);
+  const hasPassword = !!(account && account.passwordHash);
   openModal(`
     <div class="flex items-center justify-between mb-4">
       <h3 class="font-headline-lg text-headline-lg text-on-surface">Modifier le profil</h3>
       <button data-action="close" class="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant"><span class="material-symbols-outlined text-[18px]">close</span></button>
     </div>
+    <div id="p-error" class="hidden mb-3 px-3.5 py-2.5 rounded-xl bg-error-container/15 border border-error/25 text-error font-label-md text-label-md"></div>
     <div class="flex flex-col gap-3">
-      <input id="p-name" type="text" value="${state.user.name}" class="w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface focus:border-primary"/>
-      <input id="p-email" type="email" value="${state.user.email}" class="w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface focus:border-primary"/>
+      <input id="p-name" type="text" value="${escapeAttr(state.user.name)}" placeholder="Nom complet" class="w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface focus:border-primary"/>
+      <input id="p-email" type="email" value="${escapeAttr(state.user.email)}" placeholder="E-mail" class="w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface focus:border-primary"/>
+      <div class="mt-1 pt-3 border-t border-white/[0.06]">
+        <p class="font-label-sm text-label-sm text-on-surface-variant mb-2">Changer le mot de passe (optionnel)</p>
+        <div class="flex flex-col gap-2.5">
+          ${hasPassword ? `<input id="p-current-pw" type="password" placeholder="Mot de passe actuel" class="w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant focus:border-primary"/>` : ''}
+          <input id="p-new-pw" type="password" placeholder="Nouveau mot de passe" class="w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant focus:border-primary"/>
+          <input id="p-confirm-pw" type="password" placeholder="Confirmer le nouveau mot de passe" class="w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant focus:border-primary"/>
+        </div>
+      </div>
       <button id="btn-save-profile" class="mt-2 w-full py-3.5 rounded-xl bg-primary text-on-primary font-headline-md text-headline-md font-semibold active:scale-[0.98] transition-all">Enregistrer</button>
     </div>
   `);
   document.querySelector('[data-action="close"]').addEventListener('click', closeModal);
-  document.getElementById('btn-save-profile').addEventListener('click', () => {
-    const name = document.getElementById('p-name').value.trim() || state.user.name;
+  document.getElementById('btn-save-profile').addEventListener('click', async () => {
+    const errEl = document.getElementById('p-error');
+    const showErr = (msg) => { errEl.textContent = msg; errEl.classList.remove('hidden'); };
+    errEl.classList.add('hidden');
+
+    const name = document.getElementById('p-name').value.trim();
+    const newEmail = document.getElementById('p-email').value.trim().toLowerCase();
+    if(!name || !newEmail){ showErr('Le nom et l\u2019e-mail sont obligatoires.'); return; }
+
+    const accountsNow = await loadAccounts();
+    const acc = accountsNow.find(a => a.email === currentEmail);
+    if(!acc){ toast('Erreur interne : compte introuvable'); return; }
+    if(newEmail !== currentEmail && accountsNow.some(a => a.email === newEmail)){
+      showErr('Cet e-mail est déjà utilisé par un autre compte.');
+      return;
+    }
+
+    const newPw = document.getElementById('p-new-pw').value;
+    const confirmPw = document.getElementById('p-confirm-pw').value;
+    if(newPw || confirmPw){
+      if(newPw.length < 4){ showErr('Le nouveau mot de passe doit faire au moins 4 caractères.'); return; }
+      if(newPw !== confirmPw){ showErr('Les deux mots de passe ne correspondent pas.'); return; }
+      if(hasPassword){
+        const curPw = document.getElementById('p-current-pw').value;
+        if(simpleHash(curPw) !== acc.passwordHash){ showErr('Mot de passe actuel incorrect.'); return; }
+      }
+      acc.passwordHash = simpleHash(newPw);
+    }
+
+    const oldEmail = currentEmail;
+    acc.name = name;
+    acc.email = newEmail;
+    await saveAccounts(accountsNow);
+
     state.user.name = name;
-    state.user.email = document.getElementById('p-email').value.trim() || state.user.email;
-    state.user.initials = name.split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase();
-    saveState(); closeModal(); renderSettings(); toast('Profil mis à jour');
+    state.user.email = newEmail;
+    state.user.initials = initialsOf(name);
+
+    if(newEmail !== oldEmail){
+      // Le compte change d'e-mail : on déplace ses données sous la nouvelle clé
+      // de stockage et on met à jour la session, sinon la prochaine connexion échouerait.
+      await storage.set(stateKeyFor(newEmail), JSON.stringify(state));
+      await storage.delete(stateKeyFor(oldEmail));
+      await saveSession(newEmail);
+      currentEmail = newEmail;
+    } else {
+      await saveState();
+    }
+    closeModal(); renderSettings(); toast('Profil mis à jour');
   });
 }
 
@@ -1154,7 +1905,9 @@ function openEditProfileModal(){
       currentEmail = account.email;
       const loaded = await loadUserState(currentEmail);
       state = loaded || emptyState(account);
-      if(!state.reminders) state.reminders = [];
+      if(state.activeGoalId === undefined) state.activeGoalId = null;
+      migrateEventsIfNeeded();
+      syncLongTermDueTasks();
       showApp();
       setActivePage('home');
       return;
@@ -1162,3 +1915,11 @@ function openEditProfileModal(){
   }
   showLogin();
 })();
+
+// Vérifie périodiquement si une tâche Long Terme a atteint son échéance
+// (utile si l'app reste ouverte à minuit) et rafraîchit l'écran si besoin.
+setInterval(() => {
+  if(!state || !currentEmail) return;
+  const moved = syncLongTermDueTasks();
+  if(moved && (currentPage === 'todo' || currentPage === 'home')) renderCurrentPage();
+}, 60000);

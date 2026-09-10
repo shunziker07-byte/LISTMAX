@@ -11,7 +11,7 @@ Application de productivité — tâches, agenda et objectifs de vie — dans un
 - **To-do list** — ajout/complétion/suppression de tâches, filtres par priorité, onglets Aujourd'hui / Long terme / Terminées.
 - **Calendar** — vues Jour / Semaine / Mois / Liste, ajout et suppression d'événements.
 - **Life Goals** — suivi d'objectifs par catégorie avec barre de progression.
-- **Settings** — préférences (objectif quotidien, focus, rappels), export JSON des données, édition du profil, déconnexion, suppression de compte.
+- **Settings** — préférences (objectif quotidien, focus, rappels), export/import JSON des données, édition du profil (nom, e-mail, mot de passe), confidentialité, déconnexion, suppression de compte.
 - Chaque compte a ses propres données, isolées des autres comptes créés sur le même navigateur.
 
 ## 📁 Structure du projet
