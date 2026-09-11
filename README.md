@@ -8,8 +8,8 @@ Application de productivité — tâches, agenda et objectifs de vie — dans un
 
 - **Connexion / Inscription** — e-mail + mot de passe, et un flux "Google" simulé (voir *Limites* ci-dessous).
 - **Home** — score d'accomplissement du jour, tâche en cours, raccourcis, rappels.
-- **To-do list** — ajout/complétion/suppression de tâches, filtres par priorité, onglets Aujourd'hui / Long terme / Terminées.
-- **Calendar** — vues Jour / Semaine / Mois / Liste, ajout et suppression d'événements.
+- **To-do list** — ajout/complétion/suppression de tâches, sous-tâches, recherche, réordonnancement manuel, tâches récurrentes (quotidien/hebdo/mensuel/annuel), filtres par priorité, onglets Aujourd'hui / Long terme (échéance obligatoire, transfert automatique) / Terminées.
+- **Calendar** — vues Jour (grille horaire proportionnelle) / Semaine / Mois / Liste (avec recherche), événements récurrents (quotidien/hebdo/mensuel/annuel), toute la journée, lieu, export **.ics** (compatible Google Calendar, Apple Calendar, Outlook...).
 - **Life Goals** — suivi d'objectifs par catégorie avec barre de progression.
 - **Settings** — préférences (objectif quotidien, focus, rappels), export/import JSON des données, édition du profil (nom, e-mail, mot de passe), confidentialité, déconnexion, suppression de compte.
 - Chaque compte a ses propres données, isolées des autres comptes créés sur le même navigateur.
@@ -19,6 +19,8 @@ Application de productivité — tâches, agenda et objectifs de vie — dans un
 ```
 listmax/
 ├── index.html               # Page unique de l'application (SPA)
+├── manifest.json             # Manifest PWA (installation, icônes, thème)
+├── sw.js                     # Service worker (cache hors-ligne)
 ├── assets/
 │   ├── css/
 │   │   └── style.css        # Styles custom (au-delà des utilitaires Tailwind)
@@ -28,11 +30,21 @@ listmax/
 │   └── icones/               # Logo + icônes de nav — remplaçables manuellement
 │       ├── logo.svg
 │       ├── nav-home.svg, nav-todo.svg, nav-calendar.svg, nav-goals.svg, nav-settings.svg
+│       ├── icon-192.png, icon-512.png, apple-touch-icon.png, icon-source.svg
 │       └── README.md         # Comment remplacer une icône
 ├── README.md
 ├── LICENSE
 └── .gitignore
 ```
+
+## 📲 Installation (PWA)
+
+LISTMAX est une Progressive Web App : elle peut s'installer comme une vraie application.
+
+- **Android / Chrome / Edge (desktop)** : Réglages → section "Installation" → bouton "Installer l'application" (ou l'icône d'installation dans la barre d'adresse).
+- **iPhone / iPad (Safari)** : bouton Partager → "Sur l'écran d'accueil".
+
+Une fois installée, l'app fonctionne aussi **hors-ligne** grâce au service worker (`sw.js`), qui met en cache les fichiers essentiels. Après toute modification profonde du code, incrémente `CACHE_NAME` dans `sw.js` pour forcer la mise à jour du cache chez les utilisateurs.
 
 ## 🖼️ Remplacer les icônes
 

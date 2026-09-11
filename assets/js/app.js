@@ -125,40 +125,41 @@ function recurrenceLabel(r){
   const n = r.interval || 1;
   return n > 1 ? `Tous les ${n} ${unitPlural}` : `Tous les ${r.freq==='daily'?'jours':r.freq==='weekly'?'semaines':r.freq==='monthly'?'mois':'ans'}`;
 }
+// Logique de récurrence partagée entre le Calendar et les tâches récurrentes du To-do.
+function matchesRecurrence(recurrence, anchorDate, targetDate){
+  if(!recurrence) return anchorDate === targetDate;
+  if(targetDate < anchorDate) return false;
+  if(recurrence.until && targetDate > recurrence.until) return false;
+  const interval = recurrence.interval || 1;
+  const diff = dateDiffDays(anchorDate, targetDate);
+  if(recurrence.freq === 'daily'){
+    return diff % interval === 0;
+  }
+  if(recurrence.freq === 'weekly'){
+    return diff % 7 === 0 && (diff / 7) % interval === 0;
+  }
+  if(recurrence.freq === 'monthly'){
+    const start = new Date(anchorDate + 'T00:00:00');
+    const cur = new Date(targetDate + 'T00:00:00');
+    if(start.getDate() !== cur.getDate()) return false;
+    const monthsDiff = (cur.getFullYear()-start.getFullYear())*12 + (cur.getMonth()-start.getMonth());
+    return monthsDiff >= 0 && monthsDiff % interval === 0;
+  }
+  if(recurrence.freq === 'yearly'){
+    const start = new Date(anchorDate + 'T00:00:00');
+    const cur = new Date(targetDate + 'T00:00:00');
+    if(start.getDate() !== cur.getDate() || start.getMonth() !== cur.getMonth()) return false;
+    const yearsDiff = cur.getFullYear() - start.getFullYear();
+    return yearsDiff >= 0 && yearsDiff % interval === 0;
+  }
+  return false;
+}
 // Retourne les occurrences d'événements (récurrents compris) pour une date donnée.
 function getEventsForDate(dateStr){
   const out = [];
   (state.events || []).forEach(ev => {
     if(ev.exceptions && ev.exceptions.includes(dateStr)) return;
-    if(!ev.recurrence){
-      if(ev.date === dateStr) out.push({ ...ev, occurrenceDate: dateStr });
-      return;
-    }
-    if(dateStr < ev.date) return;
-    if(ev.recurrence.until && dateStr > ev.recurrence.until) return;
-    const interval = ev.recurrence.interval || 1;
-    const diff = dateDiffDays(ev.date, dateStr);
-    let matches = false;
-    if(ev.recurrence.freq === 'daily'){
-      matches = diff % interval === 0;
-    } else if(ev.recurrence.freq === 'weekly'){
-      matches = diff % 7 === 0 && (diff / 7) % interval === 0;
-    } else if(ev.recurrence.freq === 'monthly'){
-      const start = new Date(ev.date + 'T00:00:00');
-      const cur = new Date(dateStr + 'T00:00:00');
-      if(start.getDate() === cur.getDate()){
-        const monthsDiff = (cur.getFullYear()-start.getFullYear())*12 + (cur.getMonth()-start.getMonth());
-        matches = monthsDiff >= 0 && monthsDiff % interval === 0;
-      }
-    } else if(ev.recurrence.freq === 'yearly'){
-      const start = new Date(ev.date + 'T00:00:00');
-      const cur = new Date(dateStr + 'T00:00:00');
-      if(start.getDate() === cur.getDate() && start.getMonth() === cur.getMonth()){
-        const yearsDiff = cur.getFullYear() - start.getFullYear();
-        matches = yearsDiff >= 0 && yearsDiff % interval === 0;
-      }
-    }
-    if(matches) out.push({ ...ev, occurrenceDate: dateStr });
+    if(matchesRecurrence(ev.recurrence, ev.date, dateStr)) out.push({ ...ev, occurrenceDate: dateStr });
   });
   return out;
 }
@@ -464,9 +465,10 @@ function pickGreeting(){
 // actif défini). Une catégorie vide est ignorée, jamais comptée comme "ratée" —
 // donc null (pas 0) si rien n'existe encore à évaluer.
 function computeHomeScore(){
-  const todays = state.tasks.filter(t => t.list === 'today');
+  const todayStr = dstr(TODAY);
+  const todays = state.tasks.filter(t => isTaskVisibleToday(t, todayStr));
   const parts = [];
-  if(todays.length) parts.push(todays.filter(t => t.done).length / todays.length);
+  if(todays.length) parts.push(todays.filter(t => isTaskDoneOn(t, todayStr)).length / todays.length);
   const focusGoal = state.activeGoalId ? state.goals.find(g => g.id === state.activeGoalId) : null;
   if(focusGoal) parts.push((focusGoal.progress || 0) / 100);
   if(!parts.length) return null;
@@ -491,7 +493,8 @@ function pickNextHighlight(){
   const now = new Date();
   const nowMinutes = now.getHours()*60 + now.getMinutes();
   const candidates = [];
-  state.tasks.filter(t => t.list === 'today' && !t.done && t.time).forEach(t => {
+  const todayStr = dstr(TODAY);
+  state.tasks.filter(t => isTaskVisibleToday(t, todayStr) && !isTaskDoneOn(t, todayStr) && t.time).forEach(t => {
     const mins = parseTaskTimeToMinutes(t.time);
     if(mins !== null) candidates.push({ kind: 'task', id: t.id, title: t.text, timeLabel: t.time, minutes: mins, tab: 'todo' });
   });
@@ -505,9 +508,10 @@ function pickNextHighlight(){
 }
 
 function renderHome(){
-  const todays = state.tasks.filter(t => t.list === 'today');
-  const done = todays.filter(t => t.done).length;
-  const pending = todays.filter(t => !t.done);
+  const todayStr = dstr(TODAY);
+  const todays = state.tasks.filter(t => isTaskVisibleToday(t, todayStr));
+  const done = todays.filter(t => isTaskDoneOn(t, todayStr)).length;
+  const pending = todays.filter(t => !isTaskDoneOn(t, todayStr));
   const score = computeHomeScore();
   const scorePct = score === null ? 0 : score;
   const focusGoal = state.activeGoalId ? state.goals.find(g => g.id === state.activeGoalId) : null;
@@ -639,13 +643,49 @@ function renderHome(){
   el.querySelectorAll('[data-action="snooze-task"]').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); toast('Tâche reportée de 30 min'); }));
 }
 
+// Tâches récurrentes : la visibilité et l'état "fait" dépendent du jour.
+// Les tâches non récurrentes gardent exactement leur comportement d'origine
+// (persistent jusqu'à être cochées, quel que soit leur "date" d'ancrage).
+function isTaskVisibleToday(t, dateStr){
+  if(t.list !== 'today') return false;
+  if(t.recurrence) return matchesRecurrence(t.recurrence, t.date, dateStr);
+  return true;
+}
+function isTaskDoneOn(t, dateStr){
+  if(t.recurrence) return !!(t.completions && t.completions[dateStr]);
+  return !!t.done;
+}
+function setTaskDoneOn(t, dateStr, value){
+  if(t.recurrence){
+    if(!t.completions) t.completions = {};
+    if(value) t.completions[dateStr] = true; else delete t.completions[dateStr];
+  } else {
+    t.done = value;
+  }
+}
+// Bascule la récurrence d'une tâche en conservant son état "fait" du jour de façon cohérente.
+function applyTaskRecurrenceChange(t, newRecurrence){
+  const todayStr = dstr(TODAY);
+  const wasDoneToday = isTaskDoneOn(t, todayStr);
+  if(newRecurrence){
+    t.recurrence = newRecurrence;
+    t.completions = wasDoneToday ? { [todayStr]: true } : {};
+    t.done = false;
+  } else {
+    t.recurrence = null;
+    t.done = wasDoneToday;
+    t.completions = {};
+  }
+}
 function toggleTask(id){
   const t = state.tasks.find(t => t.id === id);
   if(!t) return;
-  t.done = !t.done;
+  const todayStr = dstr(TODAY);
+  const wasDone = isTaskDoneOn(t, todayStr);
+  setTaskDoneOn(t, todayStr, !wasDone);
   saveState();
   renderCurrentPage();
-  toast(t.done ? 'Tâche terminée' : 'Tâche réactivée');
+  toast(!wasDone ? 'Tâche terminée' : 'Tâche réactivée');
 }
 
 /* ===================== TODO ===================== */
@@ -730,6 +770,7 @@ function subtaskPanelHtml(t){
 function taskRowHtml(t, idx, list){
   const subs = t.subtasks || [];
   const expanded = expandedTasks.has(t.id);
+  const doneNow = isTaskDoneOn(t, dstr(TODAY));
   return `
   <div class="rounded-2xl bg-surface-container overflow-hidden">
     <div class="p-3.5 flex items-center gap-2">
@@ -737,16 +778,17 @@ function taskRowHtml(t, idx, list){
         <button data-action="move-up" data-id="${t.id}" ${idx===0?'disabled':''} class="w-5 h-4 rounded flex items-center justify-center text-on-surface-variant ${idx===0?'opacity-30':'active:scale-90'} transition-transform"><span class="material-symbols-outlined text-[14px]">keyboard_arrow_up</span></button>
         <button data-action="move-down" data-id="${t.id}" ${idx===list.length-1?'disabled':''} class="w-5 h-4 rounded flex items-center justify-center text-on-surface-variant ${idx===list.length-1?'opacity-30':'active:scale-90'} transition-transform"><span class="material-symbols-outlined text-[14px]">keyboard_arrow_down</span></button>
       </div>
-      <button data-action="toggle" data-id="${t.id}" class="w-6 h-6 rounded-full border-2 ${t.done ? 'bg-primary border-primary' : 'border-outline-variant'} flex items-center justify-center shrink-0 transition-colors">
-        ${t.done ? '<span class="material-symbols-outlined text-on-primary text-[16px]">check</span>' : ''}
+      <button data-action="toggle" data-id="${t.id}" class="w-6 h-6 rounded-full border-2 ${doneNow ? 'bg-primary border-primary' : 'border-outline-variant'} flex items-center justify-center shrink-0 transition-colors">
+        ${doneNow ? '<span class="material-symbols-outlined text-on-primary text-[16px]">check</span>' : ''}
       </button>
       <div class="min-w-0 flex-1">
-        <p class="font-body-md text-body-md ${t.done ? 'line-through text-on-surface-variant' : 'text-on-surface'} truncate">${t.text}</p>
+        <p class="font-body-md text-body-md ${doneNow ? 'line-through text-on-surface-variant' : 'text-on-surface'} truncate">${t.text}</p>
         <div class="flex items-center gap-1.5 mt-0.5 flex-wrap">
           <span class="w-1.5 h-1.5 rounded-full ${priorityDot(t.priority)} inline-block"></span>
           <span class="font-label-sm text-label-sm text-on-surface-variant">${priorityLabel(t.priority)}</span>
           ${t.category ? `<span class="font-label-sm text-label-sm text-on-surface-variant">·</span><span class="px-1.5 py-0.5 rounded-full bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm">${t.category}</span>` : ''}
           ${t.list === 'longterme' && t.dueDate ? `<span class="font-label-sm text-label-sm text-on-surface-variant">·</span><span class="px-1.5 py-0.5 rounded-full bg-tertiary-container/25 text-tertiary font-label-sm text-label-sm flex items-center gap-1"><span class="material-symbols-outlined text-[12px]">event</span>${formatDueDate(t.dueDate)}</span>` : ''}
+          ${t.recurrence ? `<span class="font-label-sm text-label-sm text-on-surface-variant">·</span><span class="px-1.5 py-0.5 rounded-full bg-primary-container/15 text-primary font-label-sm text-label-sm flex items-center gap-1"><span class="material-symbols-outlined text-[12px]">repeat</span>${recurrenceLabel(t.recurrence)}</span>` : ''}
           <button data-action="toggle-expand" data-id="${t.id}" class="ml-auto flex items-center gap-0.5 text-on-surface-variant font-label-sm text-label-sm shrink-0">
             ${subs.length ? `${subs.filter(s=>s.done).length}/${subs.length}` : ''}
             <span class="material-symbols-outlined text-[16px]">${expanded ? 'expand_less' : 'expand_more'}</span>
@@ -765,6 +807,7 @@ function openEditTaskModal(id){
   const t = state.tasks.find(x => x.id === id);
   if(!t) return;
   const isLongterme = t.list === 'longterme';
+  const freq = t.recurrence?.freq || 'none';
   let editedPriority = t.priority;
   openModal(`
     <div class="flex items-center justify-between mb-4">
@@ -784,6 +827,20 @@ function openEditTaskModal(id){
       <div>
         <label class="font-label-sm text-label-sm text-on-surface-variant block mb-1.5">Heure (optionnel)</label>
         <input id="et-time" type="time" value="${timeToInputVal(t.time)}" class="w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface focus:border-primary"/>
+      </div>
+      <div>
+        <label class="font-label-sm text-label-sm text-on-surface-variant block mb-1.5">Répéter</label>
+        <select id="et-recurrence" class="w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface focus:border-primary">
+          <option value="none" ${freq==='none'?'selected':''}>Une seule fois</option>
+          <option value="daily" ${freq==='daily'?'selected':''}>Tous les jours</option>
+          <option value="weekly" ${freq==='weekly'?'selected':''}>Toutes les semaines</option>
+          <option value="monthly" ${freq==='monthly'?'selected':''}>Tous les mois</option>
+          <option value="yearly" ${freq==='yearly'?'selected':''}>Tous les ans</option>
+        </select>
+      </div>
+      <div id="et-until-row" class="${freq==='none' ? 'hidden' : ''}">
+        <label class="font-label-sm text-label-sm text-on-surface-variant block mb-1.5">Jusqu'au (optionnel)</label>
+        <input id="et-until" type="date" value="${t.recurrence?.until || ''}" class="w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface focus:border-primary"/>
       </div>` : `
       <div>
         <label class="font-label-sm text-label-sm text-on-surface-variant block mb-1.5">Échéance</label>
@@ -800,6 +857,9 @@ function openEditTaskModal(id){
     b.classList.remove('ring-transparent');
     b.classList.add(editedPriority==='haute'?'ring-primary':editedPriority==='normale'?'ring-tertiary':'ring-outline-variant');
   }));
+  document.getElementById('et-recurrence')?.addEventListener('change', (e) => {
+    document.getElementById('et-until-row').classList.toggle('hidden', e.target.value === 'none');
+  });
   document.getElementById('btn-save-task-edit').addEventListener('click', () => {
     const newText = document.getElementById('et-text').value.trim();
     if(!newText){ toast('Le titre ne peut pas être vide'); return; }
@@ -809,6 +869,9 @@ function openEditTaskModal(id){
     if(!isLongterme){
       const timeVal = document.getElementById('et-time').value;
       t.time = timeVal ? inputValToTime(timeVal) : '';
+      const recFreq = document.getElementById('et-recurrence').value;
+      const newRecurrence = recFreq === 'none' ? null : { freq: recFreq, interval: 1, until: document.getElementById('et-until').value || null };
+      applyTaskRecurrenceChange(t, newRecurrence);
     } else {
       t.dueDate = document.getElementById('et-due').value || '';
     }
@@ -821,15 +884,16 @@ function openEditTaskModal(id){
 function renderTodo(){
   syncLongTermDueTasks();
   const el = document.getElementById('page-todo');
-  const allToday = state.tasks.filter(t => t.list === 'today');
-  const inProgress = allToday.filter(t => !t.done).length;
-  const completed = allToday.filter(t => t.done).length;
+  const todayStr = dstr(TODAY);
+  const allToday = state.tasks.filter(t => isTaskVisibleToday(t, todayStr));
+  const inProgress = allToday.filter(t => !isTaskDoneOn(t, todayStr)).length;
+  const completed = allToday.filter(t => isTaskDoneOn(t, todayStr)).length;
   const pct = Math.round((completed/Math.max(1, allToday.length))*100);
 
   let list;
-  if(todoTab === 'today') list = allToday.filter(t => !t.done);
+  if(todoTab === 'today') list = allToday.filter(t => !isTaskDoneOn(t, todayStr));
   else if(todoTab === 'longterme') list = state.tasks.filter(t => t.list === 'longterme');
-  else list = allToday.filter(t => t.done);
+  else list = allToday.filter(t => isTaskDoneOn(t, todayStr));
 
   if(todoPriorityFilter !== 'toutes') list = list.filter(t => t.priority === todoPriorityFilter);
   if(todoSearch.trim()) list = list.filter(t => t.text.toLowerCase().includes(todoSearch.trim().toLowerCase()));
@@ -922,7 +986,7 @@ function renderTodo(){
       dueDate = dueInput ? dueInput.value : '';
       if(!dueDate){ toast('Ajoute une échéance pour cette tâche long terme'); return; }
     }
-    state.tasks.push({ id: uid(), text, priority: newPriority, category: '', time: '', dueDate, subtasks: [], done: false, list: todoTab==='longterme' ? 'longterme' : 'today', date: dstr(TODAY) });
+    state.tasks.push({ id: uid(), text, priority: newPriority, category: '', time: '', dueDate, subtasks: [], done: false, recurrence: null, completions: {}, list: todoTab==='longterme' ? 'longterme' : 'today', date: dstr(TODAY) });
     input.value = '';
     saveState();
     syncLongTermDueTasks();
@@ -965,6 +1029,74 @@ function openAddTaskModal(){
 let calendarSearch = '';
 const DAY_ROW_HEIGHT = 52; // px par heure dans la grille "Jour"
 
+/* ----- Export .ics (interopérable avec Google Calendar, Apple Calendar, Outlook...) ----- */
+function icsPad2(n){ return String(n).padStart(2, '0'); }
+function icsDate(dateStr){ return dateStr.replace(/-/g, ''); }
+function icsDateTime(dateStr, timeStr){
+  const [h, m] = (timeStr || '00:00').split(':');
+  return icsDate(dateStr) + 'T' + icsPad2(h) + icsPad2(m) + '00';
+}
+function icsEscape(str){
+  return String(str || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
+}
+// Les lignes iCalendar doivent être repliées à 75 octets (RFC 5545) pour une
+// compatibilité maximale avec tous les clients (Google/Apple/Outlook...).
+function icsFoldLine(line){
+  if(line.length <= 75) return line;
+  let result = '';
+  let rest = line;
+  let first = true;
+  while(rest.length > 0){
+    const size = first ? 75 : 74;
+    result += (first ? '' : '\r\n ') + rest.slice(0, size);
+    rest = rest.slice(size);
+    first = false;
+  }
+  return result;
+}
+function generateICS(){
+  const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//LISTMAX//FR', 'CALSCALE:GREGORIAN'];
+  (state.events || []).forEach(ev => {
+    lines.push('BEGIN:VEVENT');
+    lines.push('UID:' + ev.id + '@listmax');
+    if(ev.allDay){
+      lines.push('DTSTART;VALUE=DATE:' + icsDate(ev.date));
+      lines.push('DTEND;VALUE=DATE:' + icsDate(dstr(addDays(new Date(ev.date + 'T00:00:00'), 1))));
+    } else {
+      lines.push('DTSTART:' + icsDateTime(ev.date, ev.start));
+      lines.push('DTEND:' + icsDateTime(ev.date, ev.end));
+    }
+    lines.push(icsFoldLine('SUMMARY:' + icsEscape(ev.title)));
+    if(ev.desc) lines.push(icsFoldLine('DESCRIPTION:' + icsEscape(ev.desc)));
+    if(ev.location) lines.push(icsFoldLine('LOCATION:' + icsEscape(ev.location)));
+    if(ev.recurrence){
+      const freqMap = { daily: 'DAILY', weekly: 'WEEKLY', monthly: 'MONTHLY', yearly: 'YEARLY' };
+      let rrule = 'FREQ=' + freqMap[ev.recurrence.freq];
+      if(ev.recurrence.interval && ev.recurrence.interval > 1) rrule += ';INTERVAL=' + ev.recurrence.interval;
+      if(ev.recurrence.until) rrule += ';UNTIL=' + icsDate(ev.recurrence.until) + (ev.allDay ? '' : 'T235959');
+      lines.push('RRULE:' + rrule);
+      if(ev.exceptions && ev.exceptions.length){
+        const exdates = ev.exceptions.map(d => ev.allDay ? icsDate(d) : icsDateTime(d, ev.start));
+        lines.push(icsFoldLine('EXDATE' + (ev.allDay ? ';VALUE=DATE' : '') + ':' + exdates.join(',')));
+      }
+    }
+    lines.push('END:VEVENT');
+  });
+  lines.push('END:VCALENDAR');
+  return lines.join('\r\n') + '\r\n';
+}
+function exportICS(){
+  if(!state.events || state.events.length === 0){ toast('Aucun événement à exporter'); return; }
+  try{
+    const blob = new Blob([generateICS()], { type: 'text/calendar;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'listmax-agenda.ics';
+    document.body.appendChild(a); a.click(); a.remove();
+    toast('Agenda exporté (.ics)');
+  }catch(e){ toast('Export indisponible dans cet aperçu'); }
+}
+
 function renderCalendar(){
   const el = document.getElementById('page-calendar');
   const view = state.settings.calendarView;
@@ -1006,9 +1138,12 @@ function renderCalendar(){
 
     ${bodyHtml}
 
-    <div class="mt-8 flex justify-center w-full">
-      <button id="btn-new-event" class="w-full py-3.5 px-6 rounded-xl bg-primary text-on-primary font-headline-md text-headline-md font-semibold flex items-center justify-center gap-2 shadow-[0_4px_24px_rgba(255,176,201,0.25)] active:scale-[0.98] transition-all">
+    <div class="mt-8 flex gap-2.5 w-full">
+      <button id="btn-new-event" class="flex-1 py-3.5 px-6 rounded-xl bg-primary text-on-primary font-headline-md text-headline-md font-semibold flex items-center justify-center gap-2 shadow-[0_4px_24px_rgba(255,176,201,0.25)] active:scale-[0.98] transition-all">
         <span class="material-symbols-outlined text-[22px]">add</span><span>Nouvel événement</span>
+      </button>
+      <button id="btn-export-ics" title="Exporter l'agenda (.ics)" class="w-14 shrink-0 rounded-xl bg-surface-container-high text-on-surface-variant flex items-center justify-center active:scale-95 transition-transform">
+        <span class="material-symbols-outlined text-[22px]">ios_share</span>
       </button>
     </div>
   `;
@@ -1020,6 +1155,7 @@ function renderCalendar(){
   el.querySelector('#btn-prev')?.addEventListener('click', () => navigateCalendar(view, selected, -1));
   el.querySelector('#btn-next')?.addEventListener('click', () => navigateCalendar(view, selected, 1));
   el.querySelector('#btn-new-event')?.addEventListener('click', () => openAddEventModal(dstr(selected)));
+  el.querySelector('#btn-export-ics')?.addEventListener('click', () => exportICS());
   el.querySelectorAll('[data-action="del-event"]').forEach(b => b.addEventListener('click', (e) => {
     e.stopPropagation();
     handleDeleteEventClick(b.dataset.master, b.dataset.date);
@@ -1603,6 +1739,29 @@ function renderSettings(){
       </div>
     </div>
 
+    <span class="font-label-sm text-label-sm text-primary tracking-wider mt-6 mb-2 flex items-center gap-1.5"><span class="material-symbols-outlined text-[15px]">install_mobile</span>INSTALLATION</span>
+    <div class="rounded-2xl bg-surface-container p-card-padding">
+      ${isStandaloneDisplay() ? `
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-full bg-primary-container/20 flex items-center justify-center text-primary shrink-0"><span class="material-symbols-outlined text-[18px]">check_circle</span></div>
+        <div class="min-w-0"><p class="font-body-md text-body-md text-on-surface">Application installée</p><p class="font-label-sm text-label-sm text-on-surface-variant">Tu utilises LISTMAX depuis ton écran d'accueil</p></div>
+      </div>` : deferredInstallPrompt ? `
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant shrink-0"><span class="material-symbols-outlined text-[18px]">install_mobile</span></div>
+        <div class="min-w-0 flex-1"><p class="font-body-md text-body-md text-on-surface">Installer LISTMAX</p><p class="font-label-sm text-label-sm text-on-surface-variant">Accès rapide depuis ton écran d'accueil, fonctionne hors-ligne</p></div>
+      </div>
+      <button id="btn-install-app" class="mt-3 w-full py-3 rounded-xl bg-primary text-on-primary font-body-md text-body-md font-semibold flex items-center justify-center gap-1.5 active:scale-95 transition-transform"><span class="material-symbols-outlined text-[16px]">download</span>Installer l'application</button>
+      ` : isIOSDevice() ? `
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant shrink-0"><span class="material-symbols-outlined text-[18px]">ios_share</span></div>
+        <div class="min-w-0"><p class="font-body-md text-body-md text-on-surface">Installer sur iPhone/iPad</p><p class="font-label-sm text-label-sm text-on-surface-variant">Appuie sur <strong class="text-on-surface">Partager</strong> puis <strong class="text-on-surface">"Sur l'écran d'accueil"</strong></p></div>
+      </div>` : `
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant shrink-0"><span class="material-symbols-outlined text-[18px]">info</span></div>
+        <div class="min-w-0"><p class="font-body-md text-body-md text-on-surface">Installation disponible</p><p class="font-label-sm text-label-sm text-on-surface-variant">Ton navigateur proposera l'installation via son propre menu (souvent une icône dans la barre d'adresse)</p></div>
+      </div>`}
+    </div>
+
     <span class="font-label-sm text-label-sm text-primary tracking-wider mt-6 mb-2 flex items-center gap-1.5"><span class="material-symbols-outlined text-[15px]">bolt</span>PRÉFÉRENCES DE PRODUCTIVITÉ</span>
     <div class="rounded-2xl bg-surface-container divide-y divide-white/[0.06]">
       <div class="p-card-padding flex items-center justify-between gap-3">
@@ -1698,6 +1857,7 @@ function renderSettings(){
     <p class="text-center font-label-sm text-label-sm text-on-surface-variant/60 mt-6">LISTMAX Engine v4.2.0 · Build Obsidian<br/>Édition Haute Précision</p>
   `;
 
+  el.querySelector('#btn-install-app')?.addEventListener('click', () => triggerInstallPrompt());
   el.querySelector('#set-daily-goal').addEventListener('change', (e) => { state.settings.dailyGoal = Number(e.target.value); saveState(); toast('Objectif mis à jour'); });
   el.querySelector('#set-focus').addEventListener('change', (e) => { state.settings.focusMinutes = Number(e.target.value); saveState(); toast('Durée de focus mise à jour'); });
   el.querySelector('#set-cal-view').addEventListener('change', (e) => { state.settings.calendarView = e.target.value; saveState(); toast('Vue calendrier mise à jour'); });
@@ -1923,3 +2083,35 @@ setInterval(() => {
   const moved = syncLongTermDueTasks();
   if(moved && (currentPage === 'todo' || currentPage === 'home')) renderCurrentPage();
 }, 60000);
+
+/* ===================== PWA ===================== */
+if('serviceWorker' in navigator){
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => { /* installation impossible (ex: aperçu local sans serveur) */ });
+  });
+}
+
+let deferredInstallPrompt = null;
+function isStandaloneDisplay(){
+  return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+}
+function isIOSDevice(){
+  return /iphone|ipad|ipod/i.test(navigator.userAgent);
+}
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  if(currentPage === 'settings') renderSettings();
+});
+window.addEventListener('appinstalled', () => {
+  deferredInstallPrompt = null;
+  if(currentPage === 'settings') renderSettings();
+  toast('LISTMAX est installé \u2013 tu peux le lancer depuis ton écran d\u2019accueil');
+});
+async function triggerInstallPrompt(){
+  if(!deferredInstallPrompt) return;
+  deferredInstallPrompt.prompt();
+  await deferredInstallPrompt.userChoice;
+  deferredInstallPrompt = null;
+  renderSettings();
+}
