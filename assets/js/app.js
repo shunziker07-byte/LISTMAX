@@ -86,12 +86,13 @@ function isoWeekNumber(d){
 function emptyState(account){
   return {
     user: { name: account.name, email: account.email, plan: 'Compte gratuit', memberSince: formatMemberSince(account.createdAt), initials: initialsOf(account.name) },
-    settings: { dailyGoal: 6, focusMinutes: 25, remindersEnabled: true, calendarView: 'Semaine', theme: 'Fuchsia Noir' },
+    settings: { dailyGoal: 6, focusMinutes: 25, remindersEnabled: true, notificationsEnabled: false, calendarView: 'Semaine', theme: 'Fuchsia Noir' },
     selectedDate: dstr(TODAY),
     tasks: [],
     events: [],
     activeGoalId: null,
-    goals: []
+    goals: [],
+    scoreHistory: []
   };
 }
 function initialsOf(name){ const p = (name||'').trim().split(/\s+/).filter(Boolean); return (p.map(w=>w[0]).slice(0,2).join('') || '??').toUpperCase(); }
@@ -272,6 +273,8 @@ async function loginAs(account){
   const loaded = await loadUserState(currentEmail);
   state = loaded || emptyState(account);
   if(state.activeGoalId === undefined) state.activeGoalId = null;
+  if(state.settings.notificationsEnabled === undefined) state.settings.notificationsEnabled = false;
+  if(!Array.isArray(state.scoreHistory)) state.scoreHistory = [];
   migrateEventsIfNeeded();
   syncLongTermDueTasks();
   await saveState();
@@ -480,6 +483,43 @@ function homeScoreNote(score){
   if(score >= 50) return 'Bien avancé — encore un peu de chemin.';
   return 'La journée ne fait que commencer.';
 }
+
+/* ---- Historique & mini-graphiques (réutilisés par Home et Life Goals) ---- */
+// Met à jour (ou ajoute) le point du jour dans un tableau d'historique
+// [{date, value}], plafonné à 30 points. Retourne true si une sauvegarde est nécessaire.
+function recordHistoryPoint(historyArray, value){
+  if(value === null || value === undefined || !Array.isArray(historyArray)) return false;
+  const todayStr = dstr(TODAY);
+  const existing = historyArray.find(h => h.date === todayStr);
+  if(existing){
+    if(existing.value === value) return false;
+    existing.value = value;
+  } else {
+    historyArray.push({ date: todayStr, value });
+  }
+  if(historyArray.length > 30) historyArray.splice(0, historyArray.length - 30);
+  return true;
+}
+// Petit graphique en barres sur les `days` derniers jours (aujourd'hui inclus).
+// Les jours sans donnée enregistrée affichent une barre neutre "pas de donnée".
+function sparklineBarsHtml(historyArray, days, barColorClass){
+  const points = [];
+  for(let i = days - 1; i >= 0; i--){
+    const d = dstr(addDays(TODAY, -i));
+    const entry = (historyArray || []).find(h => h.date === d);
+    points.push({ date: d, value: entry ? entry.value : null });
+  }
+  const max = Math.max(1, ...points.map(p => p.value || 0));
+  return `<div class="flex items-end gap-1 h-8">
+    ${points.map(p => {
+      const isToday = p.date === dstr(TODAY);
+      const heightPx = p.value === null ? 4 : Math.max(4, Math.round((p.value / max) * 32));
+      return `<div class="flex-1 flex flex-col items-center justify-end h-8" title="${p.date}${p.value===null?' · pas de donnée':' · '+p.value+'%'}">
+        <div class="w-full rounded-t ${p.value === null ? 'bg-surface-container-highest/50' : (isToday ? barColorClass : barColorClass + '/50')}" style="height:${heightPx}px"></div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
 function parseTaskTimeToMinutes(str){
   if(!str) return null;
   const m = /^(\d{1,2})h(\d{2})$/.exec(str.trim());
@@ -514,6 +554,7 @@ function renderHome(){
   const pending = todays.filter(t => !isTaskDoneOn(t, todayStr));
   const score = computeHomeScore();
   const scorePct = score === null ? 0 : score;
+  if(recordHistoryPoint(state.scoreHistory, score)) saveState();
   const focusGoal = state.activeGoalId ? state.goals.find(g => g.id === state.activeGoalId) : null;
   const todaysEventCount = getEventsForDate(dstr(TODAY)).length;
   const next = pickNextHighlight();
@@ -546,6 +587,11 @@ function renderHome(){
       <div class="h-1.5 w-full rounded-full bg-surface-container-highest overflow-hidden mt-4">
         <div class="h-full rounded-full bg-gradient-to-r from-primary to-secondary" style="width:${scorePct}%"></div>
       </div>
+      ${state.scoreHistory.length > 1 ? `
+      <div class="mt-4 pt-4 border-t border-white/[0.06]">
+        <span class="font-label-sm text-label-sm text-on-surface-variant tracking-wider block mb-2">7 DERNIERS JOURS</span>
+        ${sparklineBarsHtml(state.scoreHistory, 7, 'bg-primary')}
+      </div>` : ''}
       <div class="mt-4 pt-4 border-t border-white/[0.06] grid grid-cols-3 gap-2 text-center">
         <div><span class="font-label-sm text-label-sm text-on-surface-variant block mb-0.5">Terminées</span><span class="font-headline-md text-headline-md text-on-surface font-bold">${done}${todays.length ? `/${state.settings.dailyGoal}` : ''}</span></div>
         <div><span class="font-label-sm text-label-sm text-on-surface-variant block mb-0.5">Restantes</span><span class="font-headline-md text-headline-md text-primary font-bold">${pending.length}</span></div>
@@ -1467,6 +1513,8 @@ function recomputeGoalProgress(g){
   if(g.milestones && g.milestones.length){
     g.progress = Math.round(g.milestones.filter(m => m.done).length / g.milestones.length * 100);
   }
+  if(!Array.isArray(g.progressHistory)) g.progressHistory = [];
+  recordHistoryPoint(g.progressHistory, g.progress);
 }
 function addGoalMilestone(goalId, text){
   const g = state.goals.find(x => x.id === goalId);
@@ -1582,6 +1630,10 @@ function renderGoals(){
         <div class="h-1.5 w-full rounded-full bg-surface-container-highest overflow-hidden">
           <div class="h-full rounded-full bg-gradient-to-r from-primary to-secondary" style="width:${g.progress}%"></div>
         </div>
+        ${(g.progressHistory && g.progressHistory.length > 1) ? `
+        <div class="mt-2.5">
+          ${sparklineBarsHtml(g.progressHistory, 7, 'bg-tertiary')}
+        </div>` : ''}
 
         <button data-action="toggle-goal-expand" data-id="${g.id}" class="mt-2.5 flex items-center gap-1 text-on-surface-variant font-label-sm text-label-sm">
           ${ms.length ? `<span class="font-semibold text-on-surface">${ms.filter(m=>m.done).length}/${ms.length}</span> étapes` : 'Ajouter des étapes'}
@@ -1655,6 +1707,8 @@ function adjustGoal(id, delta){
   const g = state.goals.find(g => g.id === id);
   if(!g || (g.milestones && g.milestones.length)) return;
   g.progress = Math.max(0, Math.min(100, g.progress + delta));
+  if(!Array.isArray(g.progressHistory)) g.progressHistory = [];
+  recordHistoryPoint(g.progressHistory, g.progress);
   saveState(); renderGoals();
 }
 function goalsTip(goals){
@@ -1717,7 +1771,7 @@ function openGoalModal(editId){
     if(existing){
       Object.assign(existing, payload);
     } else {
-      state.goals.push({ id: uid(), progress: 0, milestones: [], ...payload });
+      state.goals.push({ id: uid(), progress: 0, milestones: [], progressHistory: [{ date: dstr(TODAY), value: 0 }], ...payload });
     }
     saveState(); closeModal(); renderGoals(); toast(existing ? 'Objectif mis à jour' : 'Objectif créé');
   });
@@ -1785,11 +1839,29 @@ function renderSettings(){
       <div class="p-card-padding flex items-center justify-between gap-3">
         <div class="flex items-center gap-3 min-w-0">
           <div class="w-9 h-9 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant shrink-0"><span class="material-symbols-outlined text-[18px]">notifications</span></div>
-          <div class="min-w-0"><p class="font-body-md text-body-md text-on-surface">Rappels intelligents</p><p class="font-label-sm text-label-sm text-on-surface-variant">Alertes discrètes avant échéances</p></div>
+          <div class="min-w-0"><p class="font-body-md text-body-md text-on-surface">Rappels dans l'app</p><p class="font-label-sm text-label-sm text-on-surface-variant">Bandeau discret sur l'accueil avant une échéance</p></div>
         </div>
         <button id="toggle-reminders" class="toggle-track w-12 h-7 rounded-full ${state.settings.remindersEnabled?'bg-primary':'bg-surface-container-highest'} relative shrink-0">
           <span class="toggle-dot absolute top-0.5 ${state.settings.remindersEnabled?'left-[22px]':'left-0.5'} w-6 h-6 rounded-full bg-white flex items-center justify-center">${state.settings.remindersEnabled?'<span class="material-symbols-outlined text-[14px] text-primary">check</span>':''}</span>
         </button>
+      </div>
+      <div class="p-card-padding">
+        <div class="flex items-center justify-between gap-3">
+          <div class="flex items-center gap-3 min-w-0">
+            <div class="w-9 h-9 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant shrink-0"><span class="material-symbols-outlined text-[18px]">notifications_active</span></div>
+            <div class="min-w-0"><p class="font-body-md text-body-md text-on-surface">Notifications navigateur</p><p class="font-label-sm text-label-sm text-on-surface-variant">${!notificationsSupported() ? 'Non supporté par ce navigateur' : notificationPermissionLabel()}</p></div>
+          </div>
+          ${notificationsSupported() && Notification.permission === 'granted' ? `
+          <button id="toggle-notifications" class="toggle-track w-12 h-7 rounded-full ${state.settings.notificationsEnabled?'bg-primary':'bg-surface-container-highest'} relative shrink-0">
+            <span class="toggle-dot absolute top-0.5 ${state.settings.notificationsEnabled?'left-[22px]':'left-0.5'} w-6 h-6 rounded-full bg-white flex items-center justify-center">${state.settings.notificationsEnabled?'<span class="material-symbols-outlined text-[14px] text-primary">check</span>':''}</span>
+          </button>` : notificationsSupported() && Notification.permission === 'default' ? `
+          <button id="btn-enable-notifications" class="px-3 py-2 rounded-lg bg-primary text-on-primary font-label-md text-label-md font-semibold shrink-0">Activer</button>` : ''}
+        </div>
+        ${notificationsSupported() && Notification.permission === 'granted' && state.settings.notificationsEnabled ? `
+        <div class="mt-3 flex items-center justify-between gap-3">
+          <p class="font-label-sm text-label-sm text-on-surface-variant">Rappelle ${NOTIFICATION_LEAD_MINUTES} min avant une tâche horodatée ou un événement, tant que LISTMAX reste ouvert (onglet ou app installée).</p>
+          <button id="btn-test-notification" class="px-2.5 py-1.5 rounded-lg bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm shrink-0 whitespace-nowrap">Tester</button>
+        </div>` : ''}
       </div>
     </div>
 
@@ -1862,6 +1934,25 @@ function renderSettings(){
   el.querySelector('#set-focus').addEventListener('change', (e) => { state.settings.focusMinutes = Number(e.target.value); saveState(); toast('Durée de focus mise à jour'); });
   el.querySelector('#set-cal-view').addEventListener('change', (e) => { state.settings.calendarView = e.target.value; saveState(); toast('Vue calendrier mise à jour'); });
   el.querySelector('#toggle-reminders').addEventListener('click', () => { state.settings.remindersEnabled = !state.settings.remindersEnabled; saveState(); renderSettings(); });
+  el.querySelector('#btn-enable-notifications')?.addEventListener('click', async () => {
+    const perm = await requestNotificationPermission();
+    if(perm === 'granted'){
+      state.settings.notificationsEnabled = true;
+      saveState();
+      toast('Notifications activées');
+    } else if(perm === 'denied'){
+      toast('Notifications refusées');
+    }
+    renderSettings();
+  });
+  el.querySelector('#toggle-notifications')?.addEventListener('click', () => {
+    state.settings.notificationsEnabled = !state.settings.notificationsEnabled;
+    saveState(); renderSettings();
+  });
+  el.querySelector('#btn-test-notification')?.addEventListener('click', () => {
+    showAppNotification('Test \u2013 LISTMAX', 'Si tu vois ceci, les notifications fonctionnent \u2713', 'test-notification');
+    toast('Notification de test envoyée');
+  });
   el.querySelector('#btn-export').addEventListener('click', () => {
     try{
       const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
@@ -2066,6 +2157,8 @@ async function openEditProfileModal(){
       const loaded = await loadUserState(currentEmail);
       state = loaded || emptyState(account);
       if(state.activeGoalId === undefined) state.activeGoalId = null;
+      if(state.settings.notificationsEnabled === undefined) state.settings.notificationsEnabled = false;
+      if(!Array.isArray(state.scoreHistory)) state.scoreHistory = [];
       migrateEventsIfNeeded();
       syncLongTermDueTasks();
       showApp();
@@ -2115,3 +2208,65 @@ async function triggerInstallPrompt(){
   deferredInstallPrompt = null;
   renderSettings();
 }
+
+/* ===================== NOTIFICATIONS ===================== */
+// Limite honnête : sans backend, ces notifications ne peuvent se déclencher
+// que si LISTMAX est ouvert (onglet actif/en arrière-plan, ou PWA installée
+// et en cours d'exécution). Ce n'est PAS du vrai push qui arriverait avec
+// l'app totalement fermée — cela demanderait un serveur.
+const NOTIFICATION_LEAD_MINUTES = 10;
+let notifiedToday = new Set(); // scope mémoire (session) : se réinitialise à chaque ouverture
+
+function notificationsSupported(){ return typeof Notification !== 'undefined'; }
+function notificationPermissionLabel(){
+  if(Notification.permission === 'granted') return 'Autorisées sur cet appareil';
+  if(Notification.permission === 'denied') return 'Bloquées \u2013 à réactiver dans les réglages de ton navigateur';
+  return 'Pas encore activées';
+}
+async function requestNotificationPermission(){
+  if(!notificationsSupported()) return 'unsupported';
+  try{ return await Notification.requestPermission(); }
+  catch(e){ return 'denied'; }
+}
+async function showAppNotification(title, body, tag){
+  if(!notificationsSupported() || Notification.permission !== 'granted') return;
+  try{
+    if('serviceWorker' in navigator && navigator.serviceWorker.controller){
+      const reg = await navigator.serviceWorker.getRegistration();
+      if(reg && reg.showNotification){
+        reg.showNotification(title, { body, tag, icon: 'assets/icones/icon-192.png', badge: 'assets/icones/icon-192.png' });
+        return;
+      }
+    }
+    new Notification(title, { body, tag, icon: 'assets/icones/icon-192.png' });
+  }catch(e){ /* environnement sans support (ex: aperçu local) */ }
+}
+function checkUpcomingNotifications(){
+  if(!state || !currentEmail) return;
+  if(!state.settings.notificationsEnabled) return;
+  if(!notificationsSupported() || Notification.permission !== 'granted') return;
+  const now = new Date();
+  const nowMinutes = now.getHours()*60 + now.getMinutes();
+  const todayStr = dstr(TODAY);
+
+  state.tasks.filter(t => isTaskVisibleToday(t, todayStr) && !isTaskDoneOn(t, todayStr) && t.time).forEach(t => {
+    const mins = parseTaskTimeToMinutes(t.time);
+    if(mins === null) return;
+    const key = 'task:' + t.id + ':' + todayStr;
+    const delta = mins - nowMinutes;
+    if(delta >= 0 && delta <= NOTIFICATION_LEAD_MINUTES && !notifiedToday.has(key)){
+      notifiedToday.add(key);
+      showAppNotification('Tâche à venir \u2013 LISTMAX', `"${t.text}" à ${t.time}`, key);
+    }
+  });
+  getEventsForDate(todayStr).filter(e => !e.allDay).forEach(e => {
+    const mins = toMin(e.start);
+    const key = 'event:' + e.id + ':' + e.occurrenceDate;
+    const delta = mins - nowMinutes;
+    if(delta >= 0 && delta <= NOTIFICATION_LEAD_MINUTES && !notifiedToday.has(key)){
+      notifiedToday.add(key);
+      showAppNotification('Événement à venir \u2013 LISTMAX', `"${e.title}" à ${e.start}`, key);
+    }
+  });
+}
+setInterval(checkUpcomingNotifications, 60000);

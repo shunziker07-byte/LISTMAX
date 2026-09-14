@@ -7,11 +7,11 @@ Application de productivité — tâches, agenda et objectifs de vie — dans un
 ## ✨ Fonctionnalités
 
 - **Connexion / Inscription** — e-mail + mot de passe, et un flux "Google" simulé (voir *Limites* ci-dessous).
-- **Home** — score d'accomplissement du jour, tâche en cours, raccourcis, rappels.
+- **Home** — score d'accomplissement calculé dynamiquement (avec mini-historique sur 7 jours), carte "Next" (prochaine tâche/événement) avec rappel si imminent, résumé cliquable du jour, actions rapides.
 - **To-do list** — ajout/complétion/suppression de tâches, sous-tâches, recherche, réordonnancement manuel, tâches récurrentes (quotidien/hebdo/mensuel/annuel), filtres par priorité, onglets Aujourd'hui / Long terme (échéance obligatoire, transfert automatique) / Terminées.
 - **Calendar** — vues Jour (grille horaire proportionnelle) / Semaine / Mois / Liste (avec recherche), événements récurrents (quotidien/hebdo/mensuel/annuel), toute la journée, lieu, export **.ics** (compatible Google Calendar, Apple Calendar, Outlook...).
-- **Life Goals** — suivi d'objectifs par catégorie avec barre de progression.
-- **Settings** — préférences (objectif quotidien, focus, rappels), export/import JSON des données, édition du profil (nom, e-mail, mot de passe), confidentialité, déconnexion, suppression de compte.
+- **Life Goals** — suivi d'objectifs par catégorie, étapes/jalons, objectif actif, historique de progression (mini-graphique), échéance avec alerte de retard.
+- **Settings** — préférences (objectif quotidien, focus, rappels dans l'app, notifications navigateur), export/import JSON des données, édition du profil (nom, e-mail, mot de passe), confidentialité, déconnexion, suppression de compte.
 - Chaque compte a ses propres données, isolées des autres comptes créés sur le même navigateur.
 
 ## 📁 Structure du projet
@@ -83,6 +83,7 @@ npx serve .
 - **Pas de vrai backend.** Comptes, mots de passe et données sont stockés uniquement dans le `localStorage` du navigateur utilisé — rien n'est envoyé à un serveur. Vider le cache du navigateur ou changer d'appareil = perte d'accès aux données.
 - **Mots de passe non sécurisés.** Le hash utilisé est une fonction simple à but de démo, pas un algorithme cryptographique (type bcrypt/argon2). Ne pas utiliser de vrais mots de passe sensibles.
 - **"Connexion Google" simulée.** Il n'y a pas de vraie intégration OAuth Google — le bouton ouvre un petit formulaire qui simule la connexion. Pour une vraie authentification Google, il faut un backend (ou un service comme Firebase Auth / Supabase Auth / Auth0) avec des identifiants OAuth enregistrés auprès de Google.
+- **Notifications non "push".** Les notifications de rappel (tâches/événements à venir) ne fonctionnent que tant que LISTMAX est ouvert — un onglet actif ou en arrière-plan, ou l'app installée et en cours d'exécution. Ce ne sont pas de vraies notifications push qui arriveraient avec l'app totalement fermée ou le téléphone verrouillé : cela demanderait un serveur (Firebase Cloud Messaging, Web Push avec VAPID, etc.).
 
 ### Pour aller plus loin (production)
 Si tu veux une vraie authentification et une synchronisation multi-appareils, il faudra remplacer la couche `storage` de `assets/js/app.js` par des appels vers un vrai backend (Firebase, Supabase, ou une API maison), et gérer les mots de passe côté serveur avec un hash sécurisé.
