@@ -8,9 +8,9 @@ Application de productivité — tâches, agenda et objectifs de vie — dans un
 
 - **Connexion / Inscription** — e-mail + mot de passe, et un flux "Google" simulé (voir *Limites* ci-dessous).
 - **Home** — score d'accomplissement calculé dynamiquement (avec mini-historique sur 7 jours), carte "Next" (prochaine tâche/événement) avec rappel si imminent, résumé cliquable du jour, actions rapides.
-- **To-do list** — ajout/complétion/suppression de tâches, sous-tâches, recherche, réordonnancement manuel, tâches récurrentes (quotidien/hebdo/mensuel/annuel), filtres par priorité, onglets Aujourd'hui / Long terme (échéance obligatoire, transfert automatique) / Terminées.
+- **To-do list** — ajout/complétion/suppression de tâches, sous-tâches, recherche, réordonnancement manuel, tâches récurrentes (quotidien/hebdo/mensuel/annuel), lien vers un objectif Life Goals, filtres par priorité, onglets Aujourd'hui / Long terme (échéance obligatoire, transfert automatique) / Terminées.
 - **Calendar** — vues Jour (grille horaire proportionnelle) / Semaine / Mois / Liste (avec recherche), événements récurrents (quotidien/hebdo/mensuel/annuel), toute la journée, lieu, export **.ics** (compatible Google Calendar, Apple Calendar, Outlook...).
-- **Life Goals** — suivi d'objectifs par catégorie, étapes/jalons, objectif actif, historique de progression (mini-graphique), échéance avec alerte de retard.
+- **Life Goals** — suivi d'objectifs par catégorie, étapes/jalons (pouvant être liées à une tâche du To-do), objectif actif, historique de progression (mini-graphique), échéance avec alerte de retard.
 - **Settings** — préférences (objectif quotidien, focus, rappels dans l'app, notifications navigateur), export/import JSON des données, édition du profil (nom, e-mail, mot de passe), confidentialité, déconnexion, suppression de compte.
 - Chaque compte a ses propres données, isolées des autres comptes créés sur le même navigateur.
 

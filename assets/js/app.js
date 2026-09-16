@@ -723,12 +723,52 @@ function applyTaskRecurrenceChange(t, newRecurrence){
     t.completions = {};
   }
 }
+/* ---- Lien bidirectionnel tâche <-> objectif (via une étape miroir) ---- */
+function linkTaskToGoal(taskId, goalId){
+  const t = state.tasks.find(x => x.id === taskId);
+  const g = state.goals.find(x => x.id === goalId);
+  if(!t || !g) return;
+  if(!g.milestones) g.milestones = [];
+  const ms = { id: uid(), text: t.text, done: isTaskDoneOn(t, dstr(TODAY)), linkedTaskId: t.id };
+  g.milestones.push(ms);
+  recomputeGoalProgress(g);
+  t.linkedGoalId = g.id;
+  t.linkedMilestoneId = ms.id;
+}
+function unlinkTaskFromGoal(taskId){
+  const t = state.tasks.find(x => x.id === taskId);
+  if(!t || !t.linkedGoalId) return;
+  const g = state.goals.find(x => x.id === t.linkedGoalId);
+  if(g){
+    const ms = (g.milestones || []).find(m => m.id === t.linkedMilestoneId);
+    if(ms) ms.linkedTaskId = null;
+  }
+  t.linkedGoalId = null;
+  t.linkedMilestoneId = null;
+}
+function syncLinkedMilestoneFromTask(t){
+  if(!t.linkedGoalId || !t.linkedMilestoneId) return;
+  const g = state.goals.find(x => x.id === t.linkedGoalId);
+  if(!g) return;
+  const ms = (g.milestones || []).find(m => m.id === t.linkedMilestoneId);
+  if(!ms) return;
+  const done = isTaskDoneOn(t, dstr(TODAY));
+  if(ms.done !== done){ ms.done = done; recomputeGoalProgress(g); }
+}
+function syncLinkedTaskFromMilestone(ms){
+  if(!ms.linkedTaskId) return;
+  const t = state.tasks.find(x => x.id === ms.linkedTaskId);
+  if(!t) return;
+  setTaskDoneOn(t, dstr(TODAY), ms.done);
+}
+
 function toggleTask(id){
   const t = state.tasks.find(t => t.id === id);
   if(!t) return;
   const todayStr = dstr(TODAY);
   const wasDone = isTaskDoneOn(t, todayStr);
   setTaskDoneOn(t, todayStr, !wasDone);
+  syncLinkedMilestoneFromTask(t);
   saveState();
   renderCurrentPage();
   toast(!wasDone ? 'Tâche terminée' : 'Tâche réactivée');
@@ -835,6 +875,7 @@ function taskRowHtml(t, idx, list){
           ${t.category ? `<span class="font-label-sm text-label-sm text-on-surface-variant">·</span><span class="px-1.5 py-0.5 rounded-full bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm">${t.category}</span>` : ''}
           ${t.list === 'longterme' && t.dueDate ? `<span class="font-label-sm text-label-sm text-on-surface-variant">·</span><span class="px-1.5 py-0.5 rounded-full bg-tertiary-container/25 text-tertiary font-label-sm text-label-sm flex items-center gap-1"><span class="material-symbols-outlined text-[12px]">event</span>${formatDueDate(t.dueDate)}</span>` : ''}
           ${t.recurrence ? `<span class="font-label-sm text-label-sm text-on-surface-variant">·</span><span class="px-1.5 py-0.5 rounded-full bg-primary-container/15 text-primary font-label-sm text-label-sm flex items-center gap-1"><span class="material-symbols-outlined text-[12px]">repeat</span>${recurrenceLabel(t.recurrence)}</span>` : ''}
+          ${t.linkedGoalId ? (() => { const g = state.goals.find(x => x.id === t.linkedGoalId); return g ? `<span class="font-label-sm text-label-sm text-on-surface-variant">·</span><button data-action="goto-linked-goal" data-id="${g.id}" class="px-1.5 py-0.5 rounded-full bg-tertiary-container/25 text-tertiary font-label-sm text-label-sm flex items-center gap-1 max-w-[110px]"><span class="material-symbols-outlined text-[12px] shrink-0">track_changes</span><span class="truncate">${g.title}</span></button>` : ''; })() : ''}
           <button data-action="toggle-expand" data-id="${t.id}" class="ml-auto flex items-center gap-0.5 text-on-surface-variant font-label-sm text-label-sm shrink-0">
             ${subs.length ? `${subs.filter(s=>s.done).length}/${subs.length}` : ''}
             <span class="material-symbols-outlined text-[16px]">${expanded ? 'expand_less' : 'expand_more'}</span>
@@ -887,6 +928,16 @@ function openEditTaskModal(id){
       <div id="et-until-row" class="${freq==='none' ? 'hidden' : ''}">
         <label class="font-label-sm text-label-sm text-on-surface-variant block mb-1.5">Jusqu'au (optionnel)</label>
         <input id="et-until" type="date" value="${t.recurrence?.until || ''}" class="w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface focus:border-primary"/>
+      </div>
+      <div id="et-link-row" class="${freq!=='none' ? 'hidden' : ''}">
+        <label class="font-label-sm text-label-sm text-on-surface-variant block mb-1.5">Lier à un objectif (optionnel)</label>
+        ${state.goals.length ? `
+        <select id="et-linked-goal" class="w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface focus:border-primary">
+          <option value="">Aucun</option>
+          ${state.goals.map(g => `<option value="${g.id}" ${t.linkedGoalId===g.id?'selected':''}>${escapeAttr(g.title)}</option>`).join('')}
+        </select>
+        <p class="font-label-sm text-label-sm text-on-surface-variant mt-1.5">Terminer cette tâche complétera automatiquement une étape de l'objectif choisi (et inversement).</p>
+        ` : `<p class="font-label-sm text-label-sm text-on-surface-variant">Crée d'abord un objectif dans Life Goals pour pouvoir en lier un.</p>`}
       </div>` : `
       <div>
         <label class="font-label-sm text-label-sm text-on-surface-variant block mb-1.5">Échéance</label>
@@ -904,7 +955,9 @@ function openEditTaskModal(id){
     b.classList.add(editedPriority==='haute'?'ring-primary':editedPriority==='normale'?'ring-tertiary':'ring-outline-variant');
   }));
   document.getElementById('et-recurrence')?.addEventListener('change', (e) => {
-    document.getElementById('et-until-row').classList.toggle('hidden', e.target.value === 'none');
+    const isNone = e.target.value === 'none';
+    document.getElementById('et-until-row').classList.toggle('hidden', isNone);
+    document.getElementById('et-link-row').classList.toggle('hidden', !isNone);
   });
   document.getElementById('btn-save-task-edit').addEventListener('click', () => {
     const newText = document.getElementById('et-text').value.trim();
@@ -918,6 +971,19 @@ function openEditTaskModal(id){
       const recFreq = document.getElementById('et-recurrence').value;
       const newRecurrence = recFreq === 'none' ? null : { freq: recFreq, interval: 1, until: document.getElementById('et-until').value || null };
       applyTaskRecurrenceChange(t, newRecurrence);
+      const linkedSelect = document.getElementById('et-linked-goal');
+      if(linkedSelect){
+        const chosenGoalId = linkedSelect.value || null;
+        if(chosenGoalId !== t.linkedGoalId){
+          if(t.linkedGoalId) unlinkTaskFromGoal(t.id);
+          if(chosenGoalId) linkTaskToGoal(t.id, chosenGoalId);
+        } else if(chosenGoalId && t.linkedMilestoneId){
+          // le texte de la tâche a pu changer : garde l'étape miroir à jour
+          const g = state.goals.find(x => x.id === chosenGoalId);
+          const ms = g && (g.milestones||[]).find(m => m.id === t.linkedMilestoneId);
+          if(ms) ms.text = t.text;
+        }
+      }
     } else {
       t.dueDate = document.getElementById('et-due').value || '';
     }
@@ -1032,7 +1098,7 @@ function renderTodo(){
       dueDate = dueInput ? dueInput.value : '';
       if(!dueDate){ toast('Ajoute une échéance pour cette tâche long terme'); return; }
     }
-    state.tasks.push({ id: uid(), text, priority: newPriority, category: '', time: '', dueDate, subtasks: [], done: false, recurrence: null, completions: {}, list: todoTab==='longterme' ? 'longterme' : 'today', date: dstr(TODAY) });
+    state.tasks.push({ id: uid(), text, priority: newPriority, category: '', time: '', dueDate, subtasks: [], done: false, recurrence: null, completions: {}, linkedGoalId: null, linkedMilestoneId: null, list: todoTab==='longterme' ? 'longterme' : 'today', date: dstr(TODAY) });
     input.value = '';
     saveState();
     syncLongTermDueTasks();
@@ -1043,10 +1109,12 @@ function renderTodo(){
 
   el.querySelectorAll('[data-action="toggle"]').forEach(b => b.addEventListener('click', () => toggleTask(b.dataset.id)));
   el.querySelectorAll('[data-action="delete"]').forEach(b => b.addEventListener('click', () => {
+    unlinkTaskFromGoal(b.dataset.id);
     state.tasks = state.tasks.filter(t => t.id !== b.dataset.id);
     expandedTasks.delete(b.dataset.id);
     saveState(); renderTodo(); toast('Tâche supprimée');
   }));
+  el.querySelectorAll('[data-action="goto-linked-goal"]').forEach(b => b.addEventListener('click', () => setActivePage('goals')));
   el.querySelectorAll('[data-action="edit-task"]').forEach(b => b.addEventListener('click', () => openEditTaskModal(b.dataset.id)));
   el.querySelectorAll('[data-action="move-up"]').forEach(b => b.addEventListener('click', () => moveTaskInList(list, b.dataset.id, -1)));
   el.querySelectorAll('[data-action="move-down"]').forEach(b => b.addEventListener('click', () => moveTaskInList(list, b.dataset.id, 1)));
@@ -1520,7 +1588,7 @@ function addGoalMilestone(goalId, text){
   const g = state.goals.find(x => x.id === goalId);
   if(!g || !text.trim()) return;
   if(!g.milestones) g.milestones = [];
-  g.milestones.push({ id: uid(), text: text.trim(), done: false });
+  g.milestones.push({ id: uid(), text: text.trim(), done: false, linkedTaskId: null });
   recomputeGoalProgress(g);
   saveState(); renderGoals();
 }
@@ -1530,11 +1598,17 @@ function toggleGoalMilestone(goalId, msId){
   if(!m) return;
   m.done = !m.done;
   recomputeGoalProgress(g);
+  syncLinkedTaskFromMilestone(m);
   saveState(); renderGoals();
 }
 function delGoalMilestone(goalId, msId){
   const g = state.goals.find(x => x.id === goalId);
   if(!g) return;
+  const m = (g.milestones || []).find(m => m.id === msId);
+  if(m && m.linkedTaskId){
+    const t = state.tasks.find(x => x.id === m.linkedTaskId);
+    if(t){ t.linkedGoalId = null; t.linkedMilestoneId = null; }
+  }
   g.milestones = (g.milestones || []).filter(m => m.id !== msId);
   recomputeGoalProgress(g);
   saveState(); renderGoals();
@@ -1549,6 +1623,7 @@ function milestonePanelHtml(g){
           ${m.done ? '<span class="material-symbols-outlined text-on-primary text-[12px]">check</span>' : ''}
         </button>
         <span class="font-label-md text-label-md flex-1 ${m.done ? 'line-through text-on-surface-variant' : 'text-on-surface'}">${m.text}</span>
+        ${m.linkedTaskId ? '<span class="material-symbols-outlined text-primary text-[14px]" title="Lié à une tâche">link</span>' : ''}
         <button data-action="del-milestone" data-goal="${g.id}" data-ms="${m.id}" class="w-6 h-6 rounded-full flex items-center justify-center text-on-surface-variant shrink-0"><span class="material-symbols-outlined text-[14px]">close</span></button>
       </div>`).join('')}
       <div class="flex items-center gap-2 mt-1">
