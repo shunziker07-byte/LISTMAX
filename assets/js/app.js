@@ -86,7 +86,7 @@ function isoWeekNumber(d){
 function emptyState(account){
   return {
     user: { name: account.name, email: account.email, plan: 'Compte gratuit', memberSince: formatMemberSince(account.createdAt), initials: initialsOf(account.name) },
-    settings: { dailyGoal: 6, focusMinutes: 25, remindersEnabled: true, notificationsEnabled: false, calendarView: 'Semaine', theme: 'Fuchsia Noir' },
+    settings: { dailyGoal: 6, focusMinutes: 25, remindersEnabled: true, notificationsEnabled: false, calendarView: 'Semaine', theme: 'dark' },
     selectedDate: dstr(TODAY),
     tasks: [],
     events: [],
@@ -275,6 +275,8 @@ async function loginAs(account){
   if(state.activeGoalId === undefined) state.activeGoalId = null;
   if(state.settings.notificationsEnabled === undefined) state.settings.notificationsEnabled = false;
   if(!Array.isArray(state.scoreHistory)) state.scoreHistory = [];
+  if(!['dark','light','system'].includes(state.settings.theme)) state.settings.theme = 'dark';
+  applyTheme();
   migrateEventsIfNeeded();
   syncLongTermDueTasks();
   await saveState();
@@ -1493,7 +1495,7 @@ function openAddEventModal(dateKey, editMasterId){
       <input id="ev-location" type="text" value="${escapeAttr(existing?.location)}" placeholder="Lieu (optionnel)" class="w-full bg-surface-container-highest/60 border border-white/10 rounded-xl px-3.5 py-3 outline-none font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant focus:border-primary"/>
 
       <label class="flex items-center gap-2.5 py-1">
-        <input id="ev-allday" type="checkbox" ${existing?.allDay ? 'checked' : ''} class="w-5 h-5 rounded border-2 border-outline-variant accent-[#ffb0c9]"/>
+        <input id="ev-allday" type="checkbox" ${existing?.allDay ? 'checked' : ''} class="w-5 h-5 rounded border-2 border-outline-variant accent-primary"/>
         <span class="font-body-md text-body-md text-on-surface">Toute la journée</span>
       </label>
       <div id="ev-time-row" class="flex gap-3 ${existing?.allDay ? 'hidden' : ''}">
@@ -1942,12 +1944,16 @@ function renderSettings(){
 
     <span class="font-label-sm text-label-sm text-primary tracking-wider mt-6 mb-2 flex items-center gap-1.5"><span class="material-symbols-outlined text-[15px]">palette</span>AFFICHAGE & INTERFACE</span>
     <div class="rounded-2xl bg-surface-container divide-y divide-white/[0.06]">
-      <div class="p-card-padding flex items-center justify-between gap-3">
-        <div class="flex items-center gap-3 min-w-0">
+      <div class="p-card-padding">
+        <div class="flex items-center gap-3 mb-3">
           <div class="w-9 h-9 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant shrink-0"><span class="material-symbols-outlined text-[18px]">dark_mode</span></div>
-          <div class="min-w-0"><p class="font-body-md text-body-md text-on-surface">Thème de couleur</p><p class="font-label-sm text-label-sm text-on-surface-variant">Obsidian Luxe</p></div>
+          <div class="min-w-0"><p class="font-body-md text-body-md text-on-surface">Thème</p><p class="font-label-sm text-label-sm text-on-surface-variant">Obsidian Luxe, en sombre ou en clair</p></div>
         </div>
-        <span class="px-2.5 py-1.5 rounded-lg bg-surface-container-high font-label-md text-label-md text-on-surface flex items-center gap-1.5 shrink-0"><span class="w-2 h-2 rounded-full bg-primary inline-block"></span>${state.settings.theme}</span>
+        <div class="p-1 rounded-full bg-surface-container-lowest flex items-center">
+          ${[['system','Système'],['dark','Sombre'],['light','Clair']].map(([val,label]) => `
+            <button data-theme-choice="${val}" class="theme-pill flex-1 py-1.5 rounded-full text-center font-label-md text-label-md transition-all ${state.settings.theme===val ? 'bg-primary-container text-on-primary-container font-semibold shadow-sm' : 'text-on-surface-variant'}">${label}</button>
+          `).join('')}
+        </div>
       </div>
       <div class="p-card-padding flex items-center justify-between gap-3">
         <div class="flex items-center gap-3 min-w-0">
@@ -2008,6 +2014,12 @@ function renderSettings(){
   el.querySelector('#set-daily-goal').addEventListener('change', (e) => { state.settings.dailyGoal = Number(e.target.value); saveState(); toast('Objectif mis à jour'); });
   el.querySelector('#set-focus').addEventListener('change', (e) => { state.settings.focusMinutes = Number(e.target.value); saveState(); toast('Durée de focus mise à jour'); });
   el.querySelector('#set-cal-view').addEventListener('change', (e) => { state.settings.calendarView = e.target.value; saveState(); toast('Vue calendrier mise à jour'); });
+  el.querySelectorAll('.theme-pill').forEach(b => b.addEventListener('click', () => {
+    state.settings.theme = b.dataset.themeChoice;
+    saveState();
+    applyTheme();
+    renderSettings();
+  }));
   el.querySelector('#toggle-reminders').addEventListener('click', () => { state.settings.remindersEnabled = !state.settings.remindersEnabled; saveState(); renderSettings(); });
   el.querySelector('#btn-enable-notifications')?.addEventListener('click', async () => {
     const perm = await requestNotificationPermission();
@@ -2221,6 +2233,7 @@ async function openEditProfileModal(){
 
 /* ===================== INIT ===================== */
 (async function init(){
+  applyTheme();
   initIcons();
   initAuthUI();
   const session = await loadSession();
@@ -2234,6 +2247,8 @@ async function openEditProfileModal(){
       if(state.activeGoalId === undefined) state.activeGoalId = null;
       if(state.settings.notificationsEnabled === undefined) state.settings.notificationsEnabled = false;
       if(!Array.isArray(state.scoreHistory)) state.scoreHistory = [];
+      if(!['dark','light','system'].includes(state.settings.theme)) state.settings.theme = 'dark';
+      applyTheme();
       migrateEventsIfNeeded();
       syncLongTermDueTasks();
       showApp();
@@ -2260,6 +2275,26 @@ if('serviceWorker' in navigator){
 }
 
 let deferredInstallPrompt = null;
+
+/* ===================== THÈME (clair / sombre / système) ===================== */
+function effectiveTheme(){
+  const t = state?.settings?.theme || 'dark';
+  if(t === 'light' || t === 'dark') return t;
+  // 'system' : suit la préférence du système d'exploitation / navigateur
+  return (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+}
+function applyTheme(){
+  const eff = effectiveTheme();
+  document.documentElement.setAttribute('data-theme', eff);
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if(meta) meta.setAttribute('content', eff === 'light' ? '#fff8f8' : '#131318');
+}
+if(window.matchMedia){
+  window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+    if(state && state.settings && state.settings.theme === 'system') applyTheme();
+  });
+}
+
 function isStandaloneDisplay(){
   return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
 }

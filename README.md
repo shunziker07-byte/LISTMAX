@@ -11,7 +11,7 @@ Application de productivité — tâches, agenda et objectifs de vie — dans un
 - **To-do list** — ajout/complétion/suppression de tâches, sous-tâches, recherche, réordonnancement manuel, tâches récurrentes (quotidien/hebdo/mensuel/annuel), lien vers un objectif Life Goals, filtres par priorité, onglets Aujourd'hui / Long terme (échéance obligatoire, transfert automatique) / Terminées.
 - **Calendar** — vues Jour (grille horaire proportionnelle) / Semaine / Mois / Liste (avec recherche), événements récurrents (quotidien/hebdo/mensuel/annuel), toute la journée, lieu, export **.ics** (compatible Google Calendar, Apple Calendar, Outlook...).
 - **Life Goals** — suivi d'objectifs par catégorie, étapes/jalons (pouvant être liées à une tâche du To-do), objectif actif, historique de progression (mini-graphique), échéance avec alerte de retard.
-- **Settings** — préférences (objectif quotidien, focus, rappels dans l'app, notifications navigateur), export/import JSON des données, édition du profil (nom, e-mail, mot de passe), confidentialité, déconnexion, suppression de compte.
+- **Settings** — thème (Système/Sombre/Clair), préférences (objectif quotidien, focus, rappels dans l'app, notifications navigateur), export/import JSON des données, édition du profil (nom, e-mail, mot de passe), confidentialité, déconnexion, suppression de compte.
 - Chaque compte a ses propres données, isolées des autres comptes créés sur le même navigateur.
 
 ## 📁 Structure du projet
@@ -91,6 +91,8 @@ Si tu veux une vraie authentification et une synchronisation multi-appareils, il
 ## 🎨 Design system
 
 Le fichier `assets/js/tailwind.config.js` contient tous les tokens (couleurs, typographie `Hanken Grotesk`, espacements) du design system **Obsidian Luxe**.
+
+Les couleurs sont définies comme variables CSS (`assets/css/style.css`, blocs `:root` et `:root[data-theme="light"]`) plutôt qu'en dur, pour permettre le thème clair sans dupliquer les classes Tailwind. Si tu ajoutes une nouvelle couleur au design system, ajoute-la aux deux blocs (`:root` et `:root[data-theme="light"]`) et référence-la dans `tailwind.config.js` avec le motif `"nom": "rgb(var(--c-nom) / <alpha-value>)"` — ce motif spécifique est nécessaire pour que les classes avec opacité (`bg-primary/20`, etc.) continuent de fonctionner.
 
 ## 📄 Licence
 
