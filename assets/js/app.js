@@ -211,13 +211,13 @@ function openEventDetailModal(masterId, occurrenceDate){
   const d = new Date(occurrenceDate + 'T00:00:00');
   openModal(`
     <div class="flex items-center justify-between mb-3">
-      <span class="px-2 py-0.5 rounded-full ${catBadge(master.category)} font-label-sm text-label-sm font-semibold uppercase">${master.category}</span>
+      <span class="px-2 py-0.5 rounded-full ${catBadge(master.category)} font-label-sm text-label-sm font-semibold uppercase">${escapeHtml(master.category)}</span>
       <button data-action="close" class="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant"><span class="material-symbols-outlined text-[18px]">close</span></button>
     </div>
-    <h3 class="font-headline-lg text-headline-lg text-on-surface mb-1">${master.title}</h3>
+    <h3 class="font-headline-lg text-headline-lg text-on-surface mb-1">${escapeHtml(master.title)}</h3>
     <p class="font-label-md text-label-md text-on-surface-variant capitalize mb-2">${d.toLocaleDateString('fr-FR',{weekday:'long', day:'numeric', month:'long'})} · ${master.allDay ? 'Toute la journée' : `${master.start} - ${master.end}`}</p>
-    ${master.location ? `<p class="font-body-md text-body-md text-on-surface-variant flex items-center gap-1.5 mb-1"><span class="material-symbols-outlined text-[16px]">location_on</span>${master.location}</p>` : ''}
-    ${master.desc ? `<p class="font-body-md text-body-md text-on-surface-variant mt-2">${master.desc}</p>` : ''}
+    ${master.location ? `<p class="font-body-md text-body-md text-on-surface-variant flex items-center gap-1.5 mb-1"><span class="material-symbols-outlined text-[16px]">location_on</span>${escapeHtml(master.location)}</p>` : ''}
+    ${master.desc ? `<p class="font-body-md text-body-md text-on-surface-variant mt-2">${escapeHtml(master.desc)}</p>` : ''}
     ${master.recurrence ? `<p class="font-label-sm text-label-sm text-primary flex items-center gap-1.5 mt-3"><span class="material-symbols-outlined text-[14px]">repeat</span>${recurrenceLabel(master.recurrence)}${master.recurrence.until ? ` · jusqu'au ${formatDueDate(master.recurrence.until)}` : ''}</p>` : ''}
     <div class="flex gap-2 mt-5">
       <button id="btn-edit-event" class="flex-1 py-3 rounded-xl bg-surface-container-high text-on-surface font-body-md text-body-md font-semibold">Modifier</button>
@@ -569,7 +569,7 @@ function renderHome(){
       <span class="font-label-sm text-label-sm text-primary font-bold flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-primary inline-block"></span>${dateFmt}</span>
       <span class="px-2.5 py-1 rounded-full bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm">Semaine ${weekNum}</span>
     </div>
-    <h1 class="font-display text-display text-on-surface mt-1">Bonjour, ${state.user.name.split(' ')[0]}</h1>
+    <h1 class="font-display text-display text-on-surface mt-1">Bonjour, ${escapeHtml(state.user.name.split(' ')[0])}</h1>
     <p class="font-body-lg text-body-lg text-on-surface-variant mt-1 mb-5">${pickGreeting()}</p>
 
     <div class="rounded-[20px] bg-surface-container p-card-padding border border-white/[0.06]">
@@ -607,7 +607,7 @@ function renderHome(){
         <span class="px-2 py-0.5 rounded-full bg-primary-container/25 text-primary font-label-sm text-label-sm font-semibold uppercase">Next</span>
         <span class="font-label-sm text-label-sm text-on-surface-variant">${next.kind === 'task' ? 'Tâche' : 'Événement'}</span>
       </div>
-      <h3 class="font-headline-md text-headline-md text-on-surface">${next.title}</h3>
+      <h3 class="font-headline-md text-headline-md text-on-surface">${escapeHtml(next.title)}</h3>
       <div class="flex items-center gap-1.5 mt-2 text-on-surface-variant">
         <span class="material-symbols-outlined text-[16px]">schedule</span>
         <span class="font-label-md text-label-md">Aujourd'hui · ${next.timeLabel}</span>
@@ -621,7 +621,7 @@ function renderHome(){
     ${next.imminent && state.settings.remindersEnabled ? `
     <div class="mt-2.5 rounded-2xl bg-primary/10 border border-primary/25 p-3.5 flex items-center gap-2.5">
       <span class="material-symbols-outlined text-primary text-[18px]">notifications_active</span>
-      <p class="font-label-md text-label-md text-on-surface">C'est bientôt : <strong>${next.title}</strong> à ${next.timeLabel}.</p>
+      <p class="font-label-md text-label-md text-on-surface">C'est bientôt : <strong>${escapeHtml(next.title)}</strong> à ${escapeHtml(next.timeLabel)}.</p>
     </div>` : ''}
     ` : todays.length === 0 ? `
     <div class="mt-5 rounded-[20px] bg-surface-container p-card-padding text-center">
@@ -646,7 +646,7 @@ function renderHome(){
       <button data-nav-to="goals" class="w-full p-3.5 flex items-center gap-3 text-left active:bg-surface-container-high transition-colors">
         <div class="w-9 h-9 rounded-full bg-surface-container-high flex items-center justify-center text-tertiary shrink-0"><span class="material-symbols-outlined text-[18px]">track_changes</span></div>
         <div class="min-w-0 flex-1">
-          <p class="font-body-md text-body-md text-on-surface truncate">${focusGoal ? focusGoal.title : 'Aucun objectif actif — en choisir un'}</p>
+          <p class="font-body-md text-body-md text-on-surface truncate">${focusGoal ? escapeHtml(focusGoal.title) : 'Aucun objectif actif — en choisir un'}</p>
         </div>
         ${focusGoal ? `<span class="font-label-md text-label-md text-on-surface-variant shrink-0">${focusGoal.progress}%</span>` : ''}
         <span class="material-symbols-outlined text-on-surface-variant text-[18px]">chevron_right</span>
@@ -800,9 +800,19 @@ function syncLongTermDueTasks(){
 }
 function formatDueDate(d){
   try{ const dt = new Date(d + 'T00:00:00'); return dt.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }); }
-  catch(e){ return d; }
+  catch(e){ return escapeHtml(d); }
 }
-function escapeAttr(s){ return String(s == null ? '' : s).replace(/"/g, '&quot;'); }
+// Échappement pour du texte inséré comme CONTENU HTML (entre balises) — nécessaire
+// partout où on affiche du texte fourni par l'utilisateur (titres, descriptions...),
+// sinon un titre de tâche/objectif/événement contenant du HTML/JS s'exécuterait tel
+// quel. Concerne aussi les sauvegardes importées (fichier .json fourni par l'utilisateur).
+function escapeHtml(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+function escapeAttr(s){ return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 function timeToInputVal(t){ if(!t) return ''; const m = /^(\d{1,2})h(\d{2})$/.exec(t); return m ? `${m[1].padStart(2,'0')}:${m[2]}` : ''; }
 function inputValToTime(v){ if(!v) return ''; const [h,m] = v.split(':'); return `${parseInt(h,10)}h${m}`; }
 
@@ -845,7 +855,7 @@ function subtaskPanelHtml(t){
         <button data-action="toggle-subtask" data-task="${t.id}" data-sub="${s.id}" class="w-5 h-5 rounded-full border-2 ${s.done ? 'bg-primary border-primary' : 'border-outline-variant'} flex items-center justify-center shrink-0 transition-colors">
           ${s.done ? '<span class="material-symbols-outlined text-on-primary text-[12px]">check</span>' : ''}
         </button>
-        <span class="font-label-md text-label-md flex-1 ${s.done ? 'line-through text-on-surface-variant' : 'text-on-surface'}">${s.text}</span>
+        <span class="font-label-md text-label-md flex-1 ${s.done ? 'line-through text-on-surface-variant' : 'text-on-surface'}">${escapeHtml(s.text)}</span>
         <button data-action="del-subtask" data-task="${t.id}" data-sub="${s.id}" class="w-6 h-6 rounded-full flex items-center justify-center text-on-surface-variant shrink-0"><span class="material-symbols-outlined text-[14px]">close</span></button>
       </div>`).join('')}
       <div class="flex items-center gap-2 mt-1 pl-8">
@@ -870,14 +880,14 @@ function taskRowHtml(t, idx, list){
         ${doneNow ? '<span class="material-symbols-outlined text-on-primary text-[16px]">check</span>' : ''}
       </button>
       <div class="min-w-0 flex-1">
-        <p class="font-body-md text-body-md ${doneNow ? 'line-through text-on-surface-variant' : 'text-on-surface'} truncate">${t.text}</p>
+        <p class="font-body-md text-body-md ${doneNow ? 'line-through text-on-surface-variant' : 'text-on-surface'} truncate">${escapeHtml(t.text)}</p>
         <div class="flex items-center gap-1.5 mt-0.5 flex-wrap">
           <span class="w-1.5 h-1.5 rounded-full ${priorityDot(t.priority)} inline-block"></span>
           <span class="font-label-sm text-label-sm text-on-surface-variant">${priorityLabel(t.priority)}</span>
-          ${t.category ? `<span class="font-label-sm text-label-sm text-on-surface-variant">·</span><span class="px-1.5 py-0.5 rounded-full bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm">${t.category}</span>` : ''}
+          ${t.category ? `<span class="font-label-sm text-label-sm text-on-surface-variant">·</span><span class="px-1.5 py-0.5 rounded-full bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm">${escapeHtml(t.category)}</span>` : ''}
           ${t.list === 'longterme' && t.dueDate ? `<span class="font-label-sm text-label-sm text-on-surface-variant">·</span><span class="px-1.5 py-0.5 rounded-full bg-tertiary-container/25 text-tertiary font-label-sm text-label-sm flex items-center gap-1"><span class="material-symbols-outlined text-[12px]">event</span>${formatDueDate(t.dueDate)}</span>` : ''}
           ${t.recurrence ? `<span class="font-label-sm text-label-sm text-on-surface-variant">·</span><span class="px-1.5 py-0.5 rounded-full bg-primary-container/15 text-primary font-label-sm text-label-sm flex items-center gap-1"><span class="material-symbols-outlined text-[12px]">repeat</span>${recurrenceLabel(t.recurrence)}</span>` : ''}
-          ${t.linkedGoalId ? (() => { const g = state.goals.find(x => x.id === t.linkedGoalId); return g ? `<span class="font-label-sm text-label-sm text-on-surface-variant">·</span><button data-action="goto-linked-goal" data-id="${g.id}" class="px-1.5 py-0.5 rounded-full bg-tertiary-container/25 text-tertiary font-label-sm text-label-sm flex items-center gap-1 max-w-[110px]"><span class="material-symbols-outlined text-[12px] shrink-0">track_changes</span><span class="truncate">${g.title}</span></button>` : ''; })() : ''}
+          ${t.linkedGoalId ? (() => { const g = state.goals.find(x => x.id === t.linkedGoalId); return g ? `<span class="font-label-sm text-label-sm text-on-surface-variant">·</span><button data-action="goto-linked-goal" data-id="${g.id}" class="px-1.5 py-0.5 rounded-full bg-tertiary-container/25 text-tertiary font-label-sm text-label-sm flex items-center gap-1 max-w-[110px]"><span class="material-symbols-outlined text-[12px] shrink-0">track_changes</span><span class="truncate">${escapeHtml(g.title)}</span></button>` : ''; })() : ''}
           <button data-action="toggle-expand" data-id="${t.id}" class="ml-auto flex items-center gap-0.5 text-on-surface-variant font-label-sm text-label-sm shrink-0">
             ${subs.length ? `${subs.filter(s=>s.done).length}/${subs.length}` : ''}
             <span class="material-symbols-outlined text-[16px]">${expanded ? 'expand_less' : 'expand_more'}</span>
@@ -1370,13 +1380,13 @@ function eventCardHtml(ev){
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-tight-margin mb-1 flex-wrap">
-                <span class="px-2 py-0.5 rounded-full ${catBadge(ev.category)} font-label-sm text-label-sm font-semibold tracking-wide uppercase">${ev.category}</span>
+                <span class="px-2 py-0.5 rounded-full ${catBadge(ev.category)} font-label-sm text-label-sm font-semibold tracking-wide uppercase">${escapeHtml(ev.category)}</span>
                 <span class="font-label-sm text-label-sm text-on-surface-variant">${ev.allDay ? 'Toute la journée' : `${ev.start} - ${ev.end}`}</span>
                 ${ev.recurrence ? `<span class="material-symbols-outlined text-on-surface-variant text-[14px]">repeat</span>` : ''}
               </div>
-              <h3 class="font-headline-md text-headline-md text-on-surface truncate">${ev.title}</h3>
-              ${ev.location ? `<p class="font-label-sm text-label-sm text-on-surface-variant truncate mt-0.5 flex items-center gap-1"><span class="material-symbols-outlined text-[12px]">location_on</span>${ev.location}</p>` : ''}
-              ${ev.desc ? `<p class="font-body-md text-body-md text-on-surface-variant truncate mt-0.5">${ev.desc}</p>` : ''}
+              <h3 class="font-headline-md text-headline-md text-on-surface truncate">${escapeHtml(ev.title)}</h3>
+              ${ev.location ? `<p class="font-label-sm text-label-sm text-on-surface-variant truncate mt-0.5 flex items-center gap-1"><span class="material-symbols-outlined text-[12px]">location_on</span>${escapeHtml(ev.location)}</p>` : ''}
+              ${ev.desc ? `<p class="font-body-md text-body-md text-on-surface-variant truncate mt-0.5">${escapeHtml(ev.desc)}</p>` : ''}
             </div>
             <div class="flex items-center gap-1 shrink-0">
               <div class="w-7 h-7 rounded-full bg-surface-container-high flex items-center justify-center ${catText(ev.category)}"><span class="material-symbols-outlined text-[16px]">${ev.icon}</span></div>
@@ -1410,7 +1420,7 @@ function renderDayTimeGrid(selected){
     <div class="flex flex-wrap gap-1.5 mb-4">
       ${allDay.map(ev => `
         <button data-action="view-event" data-master="${ev.id}" data-date="${ev.occurrenceDate}" class="px-2.5 py-1.5 rounded-full ${catBadge(ev.category)} font-label-sm text-label-sm font-semibold flex items-center gap-1.5">
-          ${ev.recurrence ? '<span class="material-symbols-outlined text-[12px]">repeat</span>' : ''}${ev.title}
+          ${ev.recurrence ? '<span class="material-symbols-outlined text-[12px]">repeat</span>' : ''}${escapeHtml(ev.title)}
         </button>`).join('')}
     </div>` : '';
 
@@ -1430,7 +1440,7 @@ function renderDayTimeGrid(selected){
         const height = Math.max(30, (toMin(ev.end) - toMin(ev.start)) / 60 * DAY_ROW_HEIGHT);
         return `
         <button data-action="view-event" data-master="${ev.id}" data-date="${ev.occurrenceDate}" class="absolute rounded-lg ${catBadge(ev.category)} border-l-2 ${catColor(ev.category)} px-2 py-1 text-left overflow-hidden z-10" style="top:${top}px; height:${height}px; left:52px; right:10px;">
-          <p class="font-label-sm text-label-sm font-semibold truncate leading-tight">${ev.title}</p>
+          <p class="font-label-sm text-label-sm font-semibold truncate leading-tight">${escapeHtml(ev.title)}</p>
           <p class="font-label-sm text-label-sm opacity-80 truncate leading-tight">${ev.start} - ${ev.end}</p>
         </button>`;
       }).join('')}
@@ -1577,7 +1587,7 @@ function goalStatusBadge(progress){
 function formatGoalDeadline(d){
   if(!d) return '';
   try{ const dt = new Date(d + 'T00:00:00'); return capitalize(dt.toLocaleDateString('fr-FR', { month: 'short', year: 'numeric' })); }
-  catch(e){ return d; }
+  catch(e){ return escapeHtml(d); }
 }
 function recomputeGoalProgress(g){
   if(g.milestones && g.milestones.length){
@@ -1624,7 +1634,7 @@ function milestonePanelHtml(g){
         <button data-action="toggle-milestone" data-goal="${g.id}" data-ms="${m.id}" class="w-5 h-5 rounded-full border-2 ${m.done ? 'bg-primary border-primary' : 'border-outline-variant'} flex items-center justify-center shrink-0 transition-colors">
           ${m.done ? '<span class="material-symbols-outlined text-on-primary text-[12px]">check</span>' : ''}
         </button>
-        <span class="font-label-md text-label-md flex-1 ${m.done ? 'line-through text-on-surface-variant' : 'text-on-surface'}">${m.text}</span>
+        <span class="font-label-md text-label-md flex-1 ${m.done ? 'line-through text-on-surface-variant' : 'text-on-surface'}">${escapeHtml(m.text)}</span>
         ${m.linkedTaskId ? '<span class="material-symbols-outlined text-primary text-[14px]" title="Lié à une tâche">link</span>' : ''}
         <button data-action="del-milestone" data-goal="${g.id}" data-ms="${m.id}" class="w-6 h-6 rounded-full flex items-center justify-center text-on-surface-variant shrink-0"><span class="material-symbols-outlined text-[14px]">close</span></button>
       </div>`).join('')}
@@ -1695,13 +1705,13 @@ function renderGoals(){
         return `
       <div class="rounded-2xl bg-surface-container p-card-padding ${g.progress>=100 ? 'border border-primary/25' : ''}">
         <div class="flex items-center justify-between mb-2 flex-wrap gap-1.5">
-          <span class="px-2 py-0.5 rounded-full ${catBadge(g.category.startsWith('Carrière')?'Travail':g.category.startsWith('Santé')?'Santé':g.category.startsWith('Finances')?'Focus':'Personnel')} font-label-sm text-label-sm font-semibold">${g.category}</span>
+          <span class="px-2 py-0.5 rounded-full ${catBadge(g.category.startsWith('Carrière')?'Travail':g.category.startsWith('Santé')?'Santé':g.category.startsWith('Finances')?'Focus':'Personnel')} font-label-sm text-label-sm font-semibold">${escapeHtml(g.category)}</span>
           ${g.deadline ? `<span class="font-label-sm text-label-sm ${overdue ? 'text-error' : 'text-on-surface-variant'} flex items-center gap-1"><span class="material-symbols-outlined text-[14px]">event</span>${overdue ? 'En retard' : formatGoalDeadline(g.deadline)}</span>` : ''}
           <span class="px-2 py-0.5 rounded-full ${goalStatusBadge(g.progress)} font-label-sm text-label-sm font-semibold ml-auto">${goalStatusLabel(g.progress)}</span>
         </div>
-        <h3 class="font-headline-md text-headline-md text-on-surface">${g.title}</h3>
+        <h3 class="font-headline-md text-headline-md text-on-surface">${escapeHtml(g.title)}</h3>
         <div class="flex items-center justify-between mt-2 mb-1.5">
-          <span class="font-label-md text-label-md text-on-surface-variant">${g.metric}</span>
+          <span class="font-label-md text-label-md text-on-surface-variant">${escapeHtml(g.metric)}</span>
           <span class="font-label-md text-label-md text-on-surface font-semibold">${g.progress}%</span>
         </div>
         <div class="h-1.5 w-full rounded-full bg-surface-container-highest overflow-hidden">
@@ -1739,7 +1749,7 @@ function renderGoals(){
       <div class="w-8 h-8 rounded-full bg-tertiary-container/30 flex items-center justify-center text-tertiary shrink-0"><span class="material-symbols-outlined text-[16px]">tips_and_updates</span></div>
       <div>
         <p class="font-label-md text-label-md text-on-surface font-semibold flex items-center gap-1.5">Conseil LISTMAX <span class="w-1.5 h-1.5 rounded-full bg-primary inline-block"></span></p>
-        <p class="font-body-md text-body-md text-on-surface-variant mt-0.5">${goalsTip(state.goals)}</p>
+        <p class="font-body-md text-body-md text-on-surface-variant mt-0.5">${escapeHtml(goalsTip(state.goals))}</p>
       </div>
     </div>` : ''}
 
@@ -1806,7 +1816,7 @@ function openGoalsOverviewModal(){
     else if(overdue) note = 'Échéance dépassée — à revoir';
     else if(g.progress === 0) note = "Pas encore démarré";
     else note = `${g.progress}% — ${goalStatusLabel(g.progress).toLowerCase()}`;
-    return `<div class="flex items-center justify-between py-2 border-b border-white/[0.06] last:border-0"><span class="font-body-md text-body-md text-on-surface truncate pr-2">${g.title}</span><span class="font-label-sm text-label-sm text-on-surface-variant shrink-0">${note}</span></div>`;
+    return `<div class="flex items-center justify-between py-2 border-b border-white/[0.06] last:border-0"><span class="font-body-md text-body-md text-on-surface truncate pr-2">${escapeHtml(g.title)}</span><span class="font-label-sm text-label-sm text-on-surface-variant shrink-0">${note}</span></div>`;
   }).join('');
   openModal(`
     <div class="flex items-center justify-between mb-3">
@@ -1859,13 +1869,13 @@ function renderSettings(){
   const el = document.getElementById('page-settings');
   el.innerHTML = `
     <div class="pt-2 rounded-[20px] bg-gradient-to-br from-primary-container/25 to-surface-container p-card-padding flex items-center gap-3.5">
-      <div class="w-14 h-14 rounded-full bg-surface-container-high flex items-center justify-center font-headline-md text-headline-md text-primary font-bold shrink-0">${state.user.initials}</div>
+      <div class="w-14 h-14 rounded-full bg-surface-container-high flex items-center justify-center font-headline-md text-headline-md text-primary font-bold shrink-0">${escapeHtml(state.user.initials)}</div>
       <div class="min-w-0 flex-1">
         <div class="flex items-center gap-2 flex-wrap">
-          <p class="font-headline-md text-headline-md text-on-surface truncate">${state.user.name}</p>
+          <p class="font-headline-md text-headline-md text-on-surface truncate">${escapeHtml(state.user.name)}</p>
           <span class="px-2 py-0.5 rounded-full bg-primary text-on-primary font-label-sm text-label-sm font-bold">${state.user.plan}</span>
         </div>
-        <p class="font-body-md text-body-md text-on-surface-variant truncate">${state.user.email}</p>
+        <p class="font-body-md text-body-md text-on-surface-variant truncate">${escapeHtml(state.user.email)}</p>
         <p class="font-label-sm text-label-sm text-on-surface-variant mt-0.5 flex items-center gap-1"><span class="material-symbols-outlined text-[13px]">verified</span>Membre depuis ${state.user.memberSince}</p>
       </div>
     </div>
@@ -2112,7 +2122,7 @@ function renderSettings(){
       <div class="text-center py-2">
         <div class="w-14 h-14 rounded-full bg-surface-container-high text-on-surface-variant flex items-center justify-center mx-auto mb-3"><span class="material-symbols-outlined text-[26px]">logout</span></div>
         <h3 class="font-headline-md text-headline-md text-on-surface">Se déconnecter ?</h3>
-        <p class="font-body-md text-body-md text-on-surface-variant mt-1.5">Tes données restent sauvegardées, tu pourras te reconnecter à tout moment avec ${state.user.email}.</p>
+        <p class="font-body-md text-body-md text-on-surface-variant mt-1.5">Tes données restent sauvegardées, tu pourras te reconnecter à tout moment avec ${escapeHtml(state.user.email)}.</p>
         <div class="flex gap-2.5 mt-5">
           <button data-action="close" class="flex-1 py-3 rounded-xl bg-surface-container-high text-on-surface font-body-md text-body-md">Annuler</button>
           <button id="btn-confirm-logout" class="flex-1 py-3 rounded-xl bg-primary text-on-primary font-body-md text-body-md font-semibold">Se déconnecter</button>
@@ -2131,7 +2141,7 @@ function renderSettings(){
       <div class="text-center py-2">
         <div class="w-14 h-14 rounded-full bg-error-container/20 text-error flex items-center justify-center mx-auto mb-3"><span class="material-symbols-outlined text-[26px]">warning</span></div>
         <h3 class="font-headline-md text-headline-md text-on-surface">Supprimer le compte ?</h3>
-        <p class="font-body-md text-body-md text-on-surface-variant mt-1.5">Cette action supprime définitivement le compte ${state.user.email} et toutes ses données LISTMAX. Elle est irréversible.</p>
+        <p class="font-body-md text-body-md text-on-surface-variant mt-1.5">Cette action supprime définitivement le compte ${escapeHtml(state.user.email)} et toutes ses données LISTMAX. Elle est irréversible.</p>
         <div class="flex gap-2.5 mt-5">
           <button data-action="close" class="flex-1 py-3 rounded-xl bg-surface-container-high text-on-surface font-body-md text-body-md">Annuler</button>
           <button id="btn-confirm-delete" class="flex-1 py-3 rounded-xl bg-error text-on-error font-body-md text-body-md font-semibold">Supprimer</button>
